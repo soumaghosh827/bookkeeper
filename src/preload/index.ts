@@ -1,0 +1,79 @@
+import { contextBridge, ipcRenderer } from "electron";
+import type { BookkeeperApi } from "@shared/types";
+
+const inv = (ch: string, ...a: unknown[]) => ipcRenderer.invoke(ch, ...a);
+
+const api: BookkeeperApi = {
+  vault: {
+    state: () => inv("vault:state"),
+    create: (p) => inv("vault:create", p),
+    unlock: (p) => inv("vault:unlock", p),
+    unlockWithRecoveryKey: (k, p) => inv("vault:unlockWithRecoveryKey", k, p),
+    lock: () => inv("vault:lock"),
+  },
+  labels: {
+    get: () => inv("labels:get"),
+    set: (k, l) => inv("labels:set", k, l),
+  },
+  prefs: {
+    get: (k) => inv("prefs:get", k),
+    set: (k, v) => inv("prefs:set", k, v),
+  },
+  backup: { create: () => inv("backup:create") },
+  accounts: {
+    search: (f, t) => inv("acc:search", f, t),
+    list: (q) => inv("acc:list", q),
+    create: (a, c) => inv("acc:create", a, c),
+    update: (id, ch, c) => inv("acc:update", id, ch, c),
+  },
+  masterImport: {
+    pickFile: () => inv("imp:pick"),
+    loadPaste: (t, h) => inv("imp:paste", t, h),
+    preview: (m) => inv("imp:preview", m),
+    commit: (m, o) => inv("imp:commit", m, o),
+  },
+  txImport: {
+    pickFile: () => inv("tximp:pick"),
+    analyze: (m) => inv("tximp:analyze", m),
+    commit: (o) => inv("tximp:commit", o),
+    cancel: () => inv("tximp:cancel"),
+    undoInfo: () => inv("tximp:undoInfo"),
+    undoLast: () => inv("tximp:undoLast"),
+  },
+  transactions: {
+    create: (t, c) => inv("tx:create", t, c),
+    update: (uid, ch, c) => inv("tx:update", uid, ch, c),
+    remove: (uid) => inv("tx:remove", uid),
+    list: (q) => inv("tx:list", q),
+    exportXlsx: (q) => inv("tx:export", q),
+  },
+  customColumns: {
+    list: (s, all) => inv("cols:list", s, all),
+    add: (s, l) => inv("cols:add", s, l),
+    rename: (k, l) => inv("cols:rename", k, l),
+    archive: (k, a) => inv("cols:archive", k, a),
+    reorder: (s, keys) => inv("cols:reorder", s, keys),
+  },
+  preview: {
+    list: () => inv("prev:list"),
+    add: (uids, at) => inv("prev:add", uids, at),
+    remove: (uid) => inv("prev:remove", uid),
+    clear: () => inv("prev:clear"),
+  },
+  templates: {
+    list: () => inv("tpl:list"),
+    save: (t) => inv("tpl:save", t),
+    uploadFile: (id) => inv("tpl:upload", id),
+    remove: (id) => inv("tpl:remove", id),
+    getTexts: (id) => inv("tpl:getTexts", id),
+    setTexts: (id, t) => inv("tpl:setTexts", id, t),
+    getPlan: (id) => inv("tpl:getPlan", id),
+    setPlan: (id, plan) => inv("tpl:setPlan", id, plan),
+  },
+  reports: {
+    prepare: (id, uids, title) => inv("rep:prepare", id, uids, title),
+    save: (r, names) => inv("rep:save", r, names),
+    discard: () => inv("rep:discard"),
+  },
+};
+contextBridge.exposeInMainWorld("api", api);

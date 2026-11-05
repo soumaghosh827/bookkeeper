@@ -1,0 +1,126 @@
+/* ==========================================================================
+   DESIGN TOKENS  (the only file you edit to re-skin the app)
+   - Every colour, size, radius and shadow used anywhere comes from here.
+   - Components never hard-code values; they reference var(--token).
+   - Themes override tokens only: [data-theme="dark"], [data-density="compact"].
+   - To add a theme: copy the dark block, rename it, set data-theme in Settings.
+   ========================================================================== */
+:root {
+  /* surfaces */
+  --bg: #f1f3f6;
+  --surface: #ffffff;
+  --surface-2: #f7f8fa; /* table header, form wells */
+  --surface-sunken: #e9edf2;
+  --border: #d9dee7;
+  --border-strong: #b7c0cf;
+
+  /* text */
+  --text: #17202f;
+  --text-muted: #566277;
+  --text-faint: #8691a4;
+
+  /* brand: ledger green. Navigation ink is separate so the chrome stays calm. */
+  --brand: #0d7a63;
+  --brand-hover: #0a6552;
+  --brand-soft: #dcf2ec;
+  --on-brand: #ffffff;
+  --ink: #0f2540;
+  --ink-hover: #1a3659;
+  --on-ink: #e9eff8;
+  --on-ink-muted: #9db0ca;
+
+  /* status */
+  --ok: #147a45;
+  --ok-soft: #dcf3e6;
+  --warn: #8f5f00;
+  --warn-soft: #fff3d1;
+  --danger: #b3261e;
+  --danger-soft: #fde9e7;
+  --focus: #2f7df0;
+  --selected: #e5f1fe;
+  --highlight: #ffe58a;
+  --flash: #cdeede;
+
+  /* paper: sketch pages in the plan preview stay white in every theme, like Word and Excel on Windows */
+  --paper: #ffffff;
+  --paper-2: #f7f8fa;
+  --paper-line: #d9dee7;
+  --paper-line-strong: #b7c0cf;
+  --paper-ink: #17202f;
+  --paper-ink-faint: #8691a4;
+
+  /* type */
+  --font-ui:
+    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Consolas", "SF Mono", monospace;
+  --fs-xs: 11.5px;
+  --fs-2xs: 6px; /* sketch tables in the plan preview */
+  --fs-sm: 12.5px;
+  --fs-md: 13.5px; /* body */
+  --fs-lg: 15px;
+  --fs-xl: 19px;
+  --fw-medium: 560;
+  --fw-bold: 650;
+
+  /* space / shape */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --shadow-1: 0 1px 2px rgba(15, 37, 64, 0.08);
+  --shadow-pop: 0 10px 32px rgba(15, 37, 64, 0.24);
+  --ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus);
+
+  /* density-controlled sizes */
+  --row-h: 34px;
+  --control-h: 32px;
+  --nav-h: 46px;
+  --motion: 120ms;
+}
+
+[data-density="compact"] {
+  --row-h: 28px;
+  --control-h: 28px;
+  --fs-md: 12.5px;
+  --fs-sm: 11.5px;
+  --sp-3: 10px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e141d;
+  --surface: #151d29;
+  --surface-2: #1a2433;
+  --surface-sunken: #0f1722;
+  --border: #29364a;
+  --border-strong: #3a4a62;
+  --text: #e5eaf2;
+  --text-muted: #a2aec2;
+  --text-faint: #7886a0;
+  --brand: #2fb18f;
+  --brand-hover: #3cc19f;
+  --brand-soft: #143a31;
+  --on-brand: #06231b;
+  --ink: #0a1017;
+  --ink-hover: #17222f;
+  --on-ink: #e5eaf2;
+  --on-ink-muted: #8493aa;
+  --ok: #4cc58a;
+  --ok-soft: #13382a;
+  --warn: #e3b341;
+  --warn-soft: #3a2f10;
+  --danger: #ff7b72;
+  --danger-soft: #42201f;
+  --focus: #6aa8ff;
+  --selected: #1b3350;
+  --highlight: #6b5a14;
+  --flash: #17483a;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 10px 32px rgba(0, 0, 0, 0.6);
+}

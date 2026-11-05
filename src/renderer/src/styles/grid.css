@@ -1,0 +1,40 @@
+/* Data grid (Master + Transactions). Column widths come from inline grid-template-columns. */
+.dg { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); overflow: hidden; }
+.dg-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.dg-headwrap { position: sticky; top: 0; z-index: 3; background: var(--surface-2); border-bottom: 1px solid var(--border-strong); }
+.dg-row { display: grid; align-items: stretch; height: var(--row-h); border-bottom: 1px solid var(--border); background: var(--surface); }
+.dg-row:hover { background: color-mix(in srgb, var(--selected) 45%, var(--surface)); }
+.dg-row.sel { background: var(--selected); }
+.dg-row.dim { color: var(--text-muted); }
+.dg-headwrap .dg-row { background: transparent; border-bottom: 0; }
+.dg-headwrap .dg-row:hover { background: transparent; }
+
+.dg-th { height: var(--row-h); display: flex; align-items: center; gap: 4px; padding: 0 var(--sp-2); border: 0; border-radius: 0; background: transparent; font-weight: var(--fw-medium); font-size: var(--fs-sm); color: var(--text-muted); text-align: left; overflow: hidden; }
+.dg-th:hover:not(:disabled) { background: var(--surface-sunken); color: var(--text); }
+.dg-th.r { justify-content: flex-end; } .dg-th .ind { color: var(--brand); font-size: 10px; }
+.dg-th.on { color: var(--text); }
+.dg-fl { padding: 3px 4px; }
+.dg-fl input { height: calc(var(--row-h) - 8px); font-size: var(--fs-sm); background: var(--surface); }
+.dg-fl input:not(:placeholder-shown) { border-color: var(--brand); background: var(--brand-soft); color: var(--text); }
+.dg-chk { display: grid; place-items: center; }
+.dg-act { display: flex; align-items: center; justify-content: center; gap: 2px; }
+.dg-act button { height: calc(var(--row-h) - 8px); width: calc(var(--row-h) - 8px); padding: 0; }
+.dg-empty { padding: var(--sp-6); text-align: center; color: var(--text-muted); }
+
+/* cells are real inputs: keyboard navigation + native selection; editing starts on double click or F2 */
+input.cell { width: 100%; height: 100%; padding: 0 var(--sp-2); border: 0; border-right: 1px solid transparent; border-radius: 0; background: transparent; text-overflow: ellipsis; font-size: var(--fs-md); cursor: default; }
+input.cell.r { text-align: right; font-variant-numeric: tabular-nums; }
+input.cell.ro { color: var(--text-muted); }
+input.cell:focus { outline: 2px solid var(--focus); outline-offset: -2px; background: var(--surface); }
+input.cell.editing { cursor: text; background: var(--surface); outline-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent); position: relative; z-index: 1; }
+input.cell.num-tag { font-family: var(--font-mono); font-size: var(--fs-sm); }
+
+/* suggestions: one account per horizontal row */
+.sug { position: fixed; z-index: 40; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-pop); overflow: hidden; }
+.sug-row { display: grid; grid-template-columns: 1.5fr 1.25fr 1.15fr 1fr .9fr 1fr .8fr; gap: var(--sp-3); padding: 7px var(--sp-3); cursor: pointer; font-size: var(--fs-sm); align-items: center; }
+.sug-row > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sug-row + .sug-row { border-top: 1px solid var(--border); }
+.sug-row.sel { background: var(--brand-soft); box-shadow: inset 3px 0 0 var(--brand); }
+.sug-row.head { cursor: default; background: var(--surface-2); color: var(--text-faint); font-weight: var(--fw-medium); }
+.sug-none { padding: var(--sp-3); color: var(--text-muted); font-size: var(--fs-sm); }
+.sug-foot { padding: 5px var(--sp-3); font-size: var(--fs-xs); color: var(--text-faint); background: var(--surface-2); border-top: 1px solid var(--border); }

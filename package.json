@@ -1,0 +1,34 @@
+{
+  "name": "bookkeeper",
+  "productName": "BookKeeper",
+  "version": "0.1.0",
+  "description": "Offline bulk transaction entry with Excel and Word output",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev --watch",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "postinstall": "electron-builder install-app-deps",
+    "dist:win": "electron-vite build && electron-builder --win"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.10.0",
+    "better-sqlite3-multiple-ciphers": "^11.5.0",
+    "docxtemplater": "^3.50.0",
+    "exceljs": "^4.4.0",
+    "pizzip": "^3.1.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
+  }
+}

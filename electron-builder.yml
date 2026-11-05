@@ -1,0 +1,14 @@
+appId: com.bookkeeper.app
+productName: BookKeeper
+directories:
+  buildResources: resources
+files:
+  - out/**/*
+asarUnpack:
+  - node_modules/better-sqlite3-multiple-ciphers/**
+win:
+  target: nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+

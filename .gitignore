@@ -1,0 +1,36 @@
+# dependencies and build output
+node_modules
+out
+dist
+release
+
+# TypeScript incremental build caches (tsconfig.*.tsbuildinfo are in your dump)
+*.tsbuildinfo
+
+# encrypted database, SQLite side files, vault key material and backups
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+keystore.json
+*.keystore.json
+
+# logs
+*.log
+npm-debug.log*
+
+# local secrets / env
+.env
+.env.*
+
+# real data files (beneficiary names, account numbers, IFSC)
+*.xlsx
+*.xls
+*.csv
+
+# editor / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+codebase.md

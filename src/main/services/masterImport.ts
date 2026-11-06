@@ -79,7 +79,7 @@ const POSITIONAL: AccountKey[] = [
 let session: {
   source: string;
   headers: string[];
-  rows: { n: number; cells: string[] }[];
+  rows: { n: number; cells: string[]; risky: number[] }[]; // risky = columns Excel has already damaged
 } | null = null;
 
 /** Minimal TSV parser (what Excel puts on the clipboard), including "quoted\tcells" and doubled quotes. */
@@ -161,6 +161,8 @@ function setSession(
   source: string,
   grid: string[][],
   hasHeader: boolean,
+  risk: boolean[][] = [],
+  rowNums: number[] = [],
 ): ImportFileInfo {
   const width = Math.max(0, ...grid.map((r) => r.length));
   const pad = (r: string[]) =>
@@ -169,8 +171,14 @@ function setSession(
     ? pad(grid[0]).map((h, i) => h || `Column ${i + 1}`)
     : Array.from({ length: width }, (_, i) => `Column ${i + 1}`);
   const body = hasHeader ? grid.slice(1) : grid;
+  const bodyRisk = hasHeader ? risk.slice(1) : risk;
+  const bodyNums = hasHeader ? rowNums.slice(1) : rowNums;
   const rows = body
-    .map((cells, i) => ({ n: i + (hasHeader ? 2 : 1), cells: pad(cells) }))
+    .map((cells, i) => ({
+      n: bodyNums[i] ?? i + (hasHeader ? 2 : 1),
+      cells: pad(cells),
+      risky: (bodyRisk[i] ?? []).flatMap((x, c) => (x ? [c] : [])),
+    }))
     .filter((r) => r.cells.some((x) => x !== ""));
   if (!rows.length)
     throw new Error(
@@ -187,6 +195,47 @@ function setSession(
   };
 }
 
+/** Excel keeps about 15 digits of a number: a 15+ digit value, or text like 1.2E+15, is already damaged. */
+function isDamagedNumber(v: unknown, text: string): boolean {
+  if (v && typeof v === "object" && !(v instanceof Date) && "result" in v)
+    v = (v as { result?: unknown }).result; // formula
+  if (typeof v === "number") return Math.abs(v) >= 1e15;
+  return /^\d(\.\d+)?e\+\d+$/i.test(text);
+}
+
+/** Header row = the row (within the first 40) matching the most DIFFERENT known column names; titles and banners match nothing. */
+function findHeaderIndex(db: DB, grid: string[][]): number {
+  const known = new Map<string, string>(SYN);
+  for (const c of db
+    .prepare(
+      "SELECT key, label FROM custom_fields WHERE scope = 'account' AND archived = 0",
+    )
+    .all() as { key: string; label: string }[])
+    known.set(norm(c.label), c.key);
+  for (const r of db
+    .prepare("SELECT header, field_key FROM import_mappings")
+    .all() as { header: string; field_key: string }[])
+    known.set(r.header, r.field_key);
+
+  let best = -1,
+    bestScore = 0;
+  for (let i = 0; i < Math.min(grid.length, 40); i++) {
+    const keys = new Set<string>(); // distinct fields, so a title merged across cells cannot score high
+    for (const c of grid[i]) {
+      const k = known.get(norm(c));
+      if (k) keys.add(k);
+    }
+    if (keys.size > bestScore) {
+      best = i;
+      bestScore = keys.size;
+    } // earliest row wins a tie
+  }
+  if (bestScore >= 2) return best;
+  // nothing recognisable: first row with at least 3 different filled cells
+  const i = grid.findIndex((r) => new Set(r.filter(Boolean)).size >= 3);
+  return i >= 0 ? i : 0;
+}
+
 export async function loadFile(
   db: DB,
   filePath: string,
@@ -197,14 +246,34 @@ export async function loadFile(
   if (!ws) throw new Error("No sheet found in file");
   const width = ws.columnCount;
   const grid: string[][] = [];
-  ws.eachRow({ includeEmpty: false }, (row) => {
+  const risk: boolean[][] = [];
+  const nums: number[] = []; // real Excel row numbers
+  ws.eachRow({ includeEmpty: false }, (row, n) => {
     const cells: string[] = [];
-    for (let c = 1; c <= width; c++)
-      cells.push((row.getCell(c).text ?? "").trim()); // .text keeps long account numbers as shown
+    const flags: boolean[] = [];
+    for (let c = 1; c <= width; c++) {
+      const cell = row.getCell(c);
+      const text = (cell.text ?? "").trim(); // .text keeps long account numbers as shown
+      cells.push(text);
+      flags.push(isDamagedNumber(cell.value, text));
+    }
+    if (!cells.some((x) => x !== "")) return; // styled but empty rows are ignored
     grid.push(cells);
+    risk.push(flags);
+    nums.push(n);
   });
-  return setSession(db, filePath.split(/[\\/]/).pop()!, grid, true);
+  if (!grid.length) throw new Error("The sheet is empty");
+  const hi = findHeaderIndex(db, grid);
+  return setSession(
+    db,
+    filePath.split(/[\\/]/).pop()!,
+    grid.slice(hi),
+    true,
+    risk.slice(hi),
+    nums.slice(hi),
+  );
 }
+
 export const loadPaste = (db: DB, text: string, hasHeader: boolean) =>
   setSession(
     db,
@@ -228,7 +297,8 @@ function readRows(mapping: ColumnMapping) {
   if (!picked.includes("payee"))
     throw new Error("Map at least the Beneficiary column");
 
-  return session.rows.map(({ n, cells }) => {
+  const accCol = mapping.indexOf("account_no");
+  return session.rows.map(({ n, cells, risky }) => {
     const v: Record<string, string> = {};
     mapping.forEach((k, i) => {
       if (k) v[k] = cells[i] ?? "";
@@ -237,7 +307,10 @@ function readRows(mapping: ColumnMapping) {
       payee: (v.payee ?? "").trim(),
       bank: (v.bank ?? "").trim(),
       branch: (v.branch ?? "").trim(),
-      account_no: (v.account_no ?? "").replace(/\s/g, ""),
+      account_no: (v.account_no ?? "")
+        .replace(/\s/g, "")
+        .replace(/^'/, "")
+        .slice(0, 60),
       ifsc: cleanIfsc(v.ifsc ?? ""),
       remarks: (v.remarks ?? "").trim(),
     };
@@ -248,6 +321,13 @@ function readRows(mapping: ColumnMapping) {
     const issues: string[] = [];
     if (!a.payee) issues.push("Missing beneficiary");
     if (a.ifsc && !isValidIfsc(a.ifsc)) issues.push("Invalid IFSC");
+    if (
+      a.account_no &&
+      (risky.includes(accCol) || /^\d(\.\d+)?e\+\d+$/i.test(a.account_no))
+    )
+      issues.push(
+        "Account number damaged by Excel (long number). Format the column as Text, re-enter it and save again",
+      );
     return { n, v, a, extra, issues };
   });
 }
@@ -291,6 +371,9 @@ function groupRows(db: DB, mapping: ColumnMapping) {
   const getMaster = db.prepare(
     "SELECT id, payee, bank, branch, ifsc, remarks, extra FROM accounts WHERE in_master = 1 AND account_no = ? LIMIT 1",
   );
+  const getNoAcc = db.prepare(
+    "SELECT id, payee, bank, branch, ifsc, remarks, extra FROM accounts WHERE in_master = 1 AND account_no = '' AND lower(payee) = lower(?) AND lower(bank) = lower(?) AND lower(branch) = lower(?) AND ifsc = ? LIMIT 1",
+  );
   const groups = new Map<string, Group>();
   const invalid: typeof rows = [];
   for (const r of rows) {
@@ -298,7 +381,9 @@ function groupRows(db: DB, mapping: ColumnMapping) {
       invalid.push(r);
       continue;
     }
-    const key = r.a.account_no || `#${r.n}`;
+    const key =
+      r.a.account_no ||
+      "~" + [r.a.payee, r.a.bank, r.a.branch, r.a.ifsc].join("|").toLowerCase();
     let g = groups.get(key);
     if (!g) {
       g = {
@@ -310,7 +395,8 @@ function groupRows(db: DB, mapping: ColumnMapping) {
         seen: newSeen(),
         existing: r.a.account_no
           ? ((getMaster.get(r.a.account_no) as any) ?? null)
-          : null,
+          : ((getNoAcc.get(r.a.payee, r.a.bank, r.a.branch, r.a.ifsc) as any) ??
+            null),
       };
       groups.set(key, g);
     }

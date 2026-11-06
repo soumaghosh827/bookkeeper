@@ -29,8 +29,8 @@ const api: BookkeeperApi = {
   masterImport: {
     pickFile: () => inv("imp:pick"),
     loadPaste: (t, h) => inv("imp:paste", t, h),
-    preview: (m) => inv("imp:preview", m),
-    commit: (m, o) => inv("imp:commit", m, o),
+    analyze: (m) => inv("imp:analyze", m),
+    commitPlan: (m, o) => inv("imp:commitplan", m, o),
   },
   txImport: {
     pickFile: () => inv("tximp:pick"),

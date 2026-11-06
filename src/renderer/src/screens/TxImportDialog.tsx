@@ -12,6 +12,8 @@ import type {
   TxImportResult,
 } from "@shared/types";
 import Modal from "@/components/Modal";
+import AccountConflictCard from "../components/AccountConflictCard";
+import { useAccountChoices } from "../lib/useAccountChoices";
 
 type Step = "pick" | "map" | "review" | "done";
 type Kind = TxImportException["kind"];
@@ -24,17 +26,6 @@ type AccGroup = {
   rowCount: number;
   diffId?: string; // set when the account already exists and differs from the file
   fields: Map<AccField, FieldConflict>;
-};
-
-const nk = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase(); // same equality the backend uses
-
-const topOf = (f: FieldConflict) => {
-  const file = f.candidates
-    .filter((c) => c.source === "file")
-    .sort((a, b) => b.count - a.count);
-  return file.length > 1 && file[0].count > file[1].count
-    ? file[0].value
-    : null;
 };
 
 const CORE = [
@@ -56,6 +47,7 @@ const KIND_LABEL: Record<Kind, string> = {
   file_conflict: "Conflict inside the file",
   zero_amount: "Zero amount",
   high_value: "High value",
+  look_alike: "Looks like an existing account",
 };
 const isAmt = (k: Kind): k is AmountKind =>
   k === "zero_amount" || k === "high_value";
@@ -65,9 +57,11 @@ const num = (x: number) => x.toLocaleString("en-IN");
 /** Transactions import: choose file -> match columns -> review (bulk rules + exceptions only) -> import. */
 export default function TxImportDialog({
   labels,
+  masterName = "Master",
   onClose,
 }: {
   labels: Labels;
+  masterName?: string;
   onClose: (changed: boolean) => void;
 }) {
   const [step, setStep] = useState<Step>("pick");
@@ -79,15 +73,18 @@ export default function TxImportDialog({
     Pick<TxImportOptions, "newAccounts" | "masterDiff" | "existingTx">
   >({ newAccounts: "master", masterDiff: "keep", existingTx: "skip" });
   const [kinds, setKinds] = useState<Set<AmountKind>>(new Set());
-  const [dec, setDec] = useState<Record<string, Decision>>({});
-  // explicit picks only: account_no -> field -> chosen value. Untouched fields follow the default/bulk rule.
-  const [fc, setFc] = useState<
-    Record<string, Partial<Record<AccField, string>>>
-  >({});
   const [showRejected, setShowRejected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [result, setResult] = useState<TxImportResult | null>(null);
+
+  const {
+    dec,
+    fc,
+    setDecision,
+    setChoice,
+    reset: resetChoices,
+  } = useAccountChoices<Decision>();
 
   useEffect(() => {
     Promise.all([
@@ -129,8 +126,7 @@ export default function TxImportDialog({
       const r = await window.api.txImport.analyze(mapping);
       if (!r.ok) return setErr(r.error ?? "Check failed");
       setAn(r.data!);
-      setDec({});
-      setFc({});
+      resetChoices();
       setKinds(new Set());
       setShowRejected(false);
       setStep("review");
@@ -166,28 +162,11 @@ export default function TxImportDialog({
       return c;
     });
 
-  const setDecision = (id: string, v: string) =>
-    setDec((d) => {
-      const c = { ...d };
-      if (v) c[id] = v as Decision;
-      else delete c[id];
-      return c;
-    });
-
-  const setChoice = (accNo: string, field: AccField, value: string) =>
-    setFc((s) => {
-      const acc = { ...(s[accNo] ?? {}) };
-      if (value) acc[field] = value;
-      else delete acc[field];
-      const next = { ...s };
-      if (Object.keys(acc).length) next[accNo] = acc;
-      else delete next[accNo];
-      return next;
-    });
-
   const exc = an?.exceptions ?? [];
 
   const txExc = exc.filter((e) => isAmt(e.kind));
+
+  const likeExc = exc.filter((e) => e.kind === "look_alike");
 
   const count = useMemo(() => {
     const c: Record<Kind, number> = {
@@ -195,6 +174,7 @@ export default function TxImportDialog({
       file_conflict: 0,
       zero_amount: 0,
       high_value: 0,
+      look_alike: 0,
     };
     for (const e of exc) c[e.kind]++;
     return c;
@@ -203,7 +183,7 @@ export default function TxImportDialog({
   const accGroups = useMemo(() => {
     const m = new Map<string, AccGroup>();
     for (const e of exc) {
-      if (isAmt(e.kind)) continue;
+      if (isAmt(e.kind) || e.kind === "look_alike") continue;
       let g = m.get(e.account_no);
       if (!g) {
         g = {
@@ -221,9 +201,14 @@ export default function TxImportDialog({
     return [...m.values()];
   }, [exc]);
 
+  const skippedLike = likeExc.filter((e) => dec[e.id] === "skip");
+  const skippedNos = new Set(skippedLike.map((e) => e.account_no));
+  const likeRows = skippedLike.reduce((s, e) => s + e.rowCount, 0);
+
   const blocked = exc.filter(
     (e) =>
       isAmt(e.kind) &&
+      !skippedNos.has(e.account_no) &&
       !(
         dec[e.id] === "import" ||
         (dec[e.id] !== "skip" && kinds.has(e.kind as AmountKind))
@@ -232,7 +217,8 @@ export default function TxImportDialog({
 
   const willImport = an
     ? an.transactions.fresh -
-      blocked +
+      blocked -
+      likeRows +
       (opt.existingTx === "import" ? an.transactions.exists : 0)
     : 0;
 
@@ -295,6 +281,15 @@ export default function TxImportDialog({
                         <option value="skip">Skip</option>
                       </select>
                     )}
+                    {e.kind === "look_alike" && (
+                      <select
+                        value={dec[e.id] ?? ""}
+                        onChange={(ev) => setDecision(e.id, ev.target.value)}
+                      >
+                        <option value="">Add as a new account</option>
+                        <option value="skip">Skip these rows</option>
+                      </select>
+                    )}
                     {e.kind === "file_conflict" && (
                       <span className="muted">First value used</span>
                     )}
@@ -312,135 +307,6 @@ export default function TxImportDialog({
         )}
       </div>
     );
-
-  // what the account keeps if the user touches nothing
-  const defaultOf = (g: AccGroup, f: FieldConflict) =>
-    g.diffId && (dec[g.diffId] ?? opt.masterDiff) !== "update"
-      ? f.current
-      : f.defaultValue;
-  const chosenOf = (g: AccGroup, f: FieldConflict) =>
-    fc[g.no]?.[f.field] ?? defaultOf(g, f);
-  const pickValue = (g: AccGroup, f: FieldConflict, v: string) =>
-    setChoice(g.no, f.field, nk(v) === nk(defaultOf(g, f)) ? "" : v); // only real deviations are stored
-  const candNote = (
-    f: FieldConflict,
-    c: FieldConflict["candidates"][number],
-  ) => {
-    const parts: string[] = [];
-    if (c.source === "file")
-      parts.push(
-        `${c.count} row${c.count > 1 ? "s" : ""}: ${c.rows.slice(0, 3).join(", ")}${c.rows.length > 3 ? "…" : ""}`,
-      );
-    if (c.source === "master" || (f.current && nk(c.value) === nk(f.current)))
-      parts.push("current in master");
-    if (c.value === topOf(f)) parts.push("most common");
-    return parts.length ? ` (${parts.join(" · ")})` : "";
-  };
-
-  const accountCard = accGroups.length > 0 && (
-    <div className="card" style={{ marginBottom: 12 }}>
-      <h3>
-        Account details → Accounts table{" "}
-        <small>
-          · pick the value to store where the file or master disagree
-        </small>
-      </h3>
-      <div style={{ maxHeight: 380, overflow: "auto" }}>
-        {accGroups.slice(0, MAX_ROWS).map((g) => {
-          const fields = [...g.fields.values()];
-          return (
-            <div
-              key={g.no}
-              style={{
-                padding: "8px 0",
-                borderBottom: "1px solid rgba(128,128,128,.3)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                }}
-              >
-                <b className="mono">{g.no}</b>
-                <span>{g.payee}</span>
-                <span className="muted">
-                  rows {g.rows.join(", ")}
-                  {g.rowCount > g.rows.length
-                    ? ` +${g.rowCount - g.rows.length}`
-                    : ""}
-                </span>
-                {g.diffId && (
-                  <select
-                    value={dec[g.diffId!] ?? ""}
-                    onChange={(ev) => setDecision(g.diffId!, ev.target.value)}
-                  >
-                    <option value="">Account in master: follow the rule</option>
-                    <option value="keep">
-                      Account in master: keep existing
-                    </option>
-                    <option value="update">
-                      Account in master: update from file
-                    </option>
-                  </select>
-                )}
-              </div>
-              {fields.map((f) => (
-                <div
-                  key={f.field}
-                  style={{
-                    display: "flex",
-                    gap: 14,
-                    flexWrap: "wrap",
-                    marginTop: 4,
-                  }}
-                >
-                  <span style={{ width: 90 }}>{f.label}</span>
-                  {defaultOf(g, f) === "" && (
-                    <label>
-                      <input
-                        type="radio"
-                        name={`${g.no}:${f.field}`}
-                        checked={chosenOf(g, f) === ""}
-                        onChange={() => setChoice(g.no, f.field, "")}
-                      />{" "}
-                      (empty)
-                    </label>
-                  )}
-                  {f.candidates.map((c) => (
-                    <label key={c.source + c.value}>
-                      <input
-                        type="radio"
-                        name={`${g.no}:${f.field}`}
-                        checked={nk(chosenOf(g, f)) === nk(c.value)}
-                        onChange={() => pickValue(g, f, c.value)}
-                      />{" "}
-                      {c.value}
-                      <small className="muted">{candNote(f, c)}</small>
-                    </label>
-                  ))}
-                </div>
-              ))}
-              <div className="muted" style={{ marginTop: 4 }}>
-                Will be saved:{" "}
-                {fields
-                  .map((f) => `${f.label}: ${chosenOf(g, f) || "(empty)"}`)
-                  .join(" · ")}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {accGroups.length > MAX_ROWS && (
-        <p className="muted" style={{ marginTop: 6 }}>
-          Showing the first {MAX_ROWS} of {num(accGroups.length)}. The rest
-          follow the rules above.
-        </p>
-      )}
-    </div>
-  );
 
   const actions =
     step === "pick" ? (
@@ -575,12 +441,12 @@ export default function TxImportDialog({
             </span>
             {an.transactions.exists > 0 && (
               <span className="chip warn">
-                {num(an.transactions.exists)} already in the database
+                {num(an.transactions.exists)} already saved in Transactions
               </span>
             )}
             <span className="chip">{num(an.accounts.new)} new accounts</span>
             <span className="chip">
-              {num(an.accounts.existing)} existing accounts
+              {num(an.accounts.existing)} accounts already saved
             </span>
             {an.transactions.twinGroups > 0 && (
               <span className="chip">
@@ -606,9 +472,11 @@ export default function TxImportDialog({
             {(an.accounts.new > 0 || an.accounts.oneOffExisting > 0) && (
               <div className="field" style={{ maxWidth: 560 }}>
                 <label>
-                  New accounts ({num(an.accounts.new)})
+                  {an.accounts.new > 0
+                    ? `New accounts in this file (${num(an.accounts.new)})`
+                    : "Accounts in this file saved earlier as one-off"}
                   {an.accounts.oneOffExisting > 0
-                    ? ` · ${num(an.accounts.oneOffExisting)} one-off accounts in the file follow the same choice`
+                    ? ` · ${num(an.accounts.oneOffExisting)} saved earlier as one-off (not in suggestions) follow this choice too`
                     : ""}
                 </label>
                 <select
@@ -622,10 +490,11 @@ export default function TxImportDialog({
                   }
                 >
                   <option value="master">
-                    Add to the accounts list used for suggestions
+                    Add to {masterName} (used for suggestions)
                   </option>
                   <option value="oneoff">
-                    Keep as one-off accounts only (no suggestions)
+                    Use for these transactions only (not added to {masterName}{" "}
+                    or suggestions)
                   </option>
                 </select>
               </div>
@@ -633,8 +502,8 @@ export default function TxImportDialog({
             {count.master_diff > 0 && (
               <div className="field" style={{ maxWidth: 560 }}>
                 <label>
-                  Existing accounts whose details differ in the file (
-                  {num(count.master_diff)})
+                  Accounts already saved whose details differ in this file (
+                  {num(count.master_diff)}): name, bank, branch or IFSC
                 </label>
                 <select
                   value={opt.masterDiff}
@@ -647,10 +516,11 @@ export default function TxImportDialog({
                   }
                 >
                   <option value="keep">
-                    Keep the existing details (recommended)
+                    Keep the saved details (recommended)
                   </option>
                   <option value="update">
-                    Update them from the file (changes all their transactions)
+                    Replace with the file's details (also shows on their older
+                    transactions)
                   </option>
                 </select>
               </div>
@@ -658,8 +528,9 @@ export default function TxImportDialog({
             {an.transactions.exists > 0 && (
               <div className="field" style={{ maxWidth: 560 }}>
                 <label>
-                  Rows already in the database ({num(an.transactions.exists)}):
-                  same account, amount, date and reference
+                  Rows in this file that match a transaction already saved in
+                  the app ({num(an.transactions.exists)}): same account, amount,
+                  date and reference
                 </label>
                 <select
                   value={opt.existingTx}
@@ -671,8 +542,12 @@ export default function TxImportDialog({
                     })
                   }
                 >
-                  <option value="skip">Skip them (recommended)</option>
-                  <option value="import">Import them anyway</option>
+                  <option value="skip">
+                    Skip them, don't add duplicates (recommended)
+                  </option>
+                  <option value="import">
+                    Add them again as new transactions
+                  </option>
                 </select>
               </div>
             )}
@@ -706,14 +581,39 @@ export default function TxImportDialog({
               count.master_diff === 0 &&
               an.transactions.exists === 0 &&
               count.zero_amount === 0 &&
-              count.high_value === 0 && (
+              count.high_value === 0 &&
+              count.look_alike === 0 && (
                 <p className="muted">
                   Nothing needs a decision. Everything in the file is clean.
                 </p>
               )}
           </div>
 
-          {accountCard}
+          {excTable(
+            likeExc,
+            "Possible account number typos → Accounts table",
+            "same name and IFSC as an account already saved, under a different account number",
+          )}
+
+          <AccountConflictCard
+            items={accGroups.map((g) => ({
+              key: g.no,
+              account_no: g.no,
+              payee: g.payee,
+              rows: g.rows,
+              rowCount: g.rowCount,
+              decisionKey: g.diffId,
+              fields: [...g.fields.values()],
+            }))}
+            rule={opt.masterDiff}
+            decisions={dec}
+            onDecision={setDecision}
+            choices={fc}
+            onChoice={setChoice}
+            title="Account details → Accounts table"
+            hint="pick the value to store where the file or master disagree"
+            maxItems={MAX_ROWS}
+          />
 
           {excTable(
             txExc,
@@ -774,34 +674,41 @@ export default function TxImportDialog({
       {step === "done" && result && (
         <div className="card">
           <h3>Import finished</h3>
+          <p className="muted" style={{ margin: "0 0 6px" }}>
+            Transactions
+          </p>
           <div className="chips">
-            <span className="chip ok">
-              {num(result.txAdded)} transactions added
+            <span className={result.txAdded > 0 ? "chip ok" : "chip"}>
+              {num(result.txAdded)} added
             </span>
-            {result.accountsAdded > 0 && (
-              <span className="chip ok">
-                {num(result.accountsAdded)} accounts added
-              </span>
-            )}
-            {result.accountsUpdated > 0 && (
-              <span className="chip">
-                {num(result.accountsUpdated)} accounts updated
-              </span>
-            )}
-            {result.accountsPromoted > 0 && (
-              <span className="chip">
-                {num(result.accountsPromoted)} one-off accounts moved to the
-                list
-              </span>
-            )}
             {result.txSkippedExisting > 0 && (
               <span className="chip">
-                {num(result.txSkippedExisting)} already existed
+                {num(result.txSkippedExisting)} skipped: already saved
               </span>
             )}
             {result.txSkippedUnconfirmed > 0 && (
               <span className="chip warn">
-                {num(result.txSkippedUnconfirmed)} not confirmed, skipped
+                {num(result.txSkippedUnconfirmed)} skipped: zero or high-value,
+                not confirmed
+              </span>
+            )}
+            {result.txSkippedLookAlike > 0 && (
+              <span className="chip warn">
+                {num(result.txSkippedLookAlike)} skipped: look-alike account
+              </span>
+            )}
+          </div>
+          <p className="muted" style={{ margin: "12px 0 6px" }}>
+            Accounts
+          </p>
+          <div className="chips">
+            <span className={result.accountsAdded > 0 ? "chip ok" : "chip"}>
+              {num(result.accountsAdded)} added
+            </span>
+            <span className="chip">{num(result.accountsUpdated)} updated</span>
+            {result.accountsPromoted > 0 && (
+              <span className="chip">
+                {num(result.accountsPromoted)} moved to {masterName}
               </span>
             )}
           </div>

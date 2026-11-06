@@ -511,3 +511,182 @@
   background: var(--warn-soft);
   color: var(--warn);
 }
+/* ---- account conflict card (shared by the Master and Transactions import reviews) ---- */
+.acc-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.acc-card > h3 {
+  margin: 0 0 var(--sp-3);
+}
+.acc-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  overflow: auto;
+  max-height: var(--acc-list-h, 60vh);
+  padding-right: var(--sp-1);
+}
+
+/* one account = one bordered block */
+.acc-block {
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+.acc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.acc-no {
+  font-size: var(--fs-md);
+}
+.acc-payee {
+  font-weight: var(--fw-medium);
+}
+.acc-rows {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  background: var(--surface-sunken);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.acc-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.acc-ctl select {
+  width: auto;
+  min-width: 0;
+  max-width: 200px;
+}
+.acc-note {
+  padding: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+/* field rows inside a block */
+.acc-field {
+  display: flex;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+}
+.acc-field + .acc-field {
+  border-top: 1px dashed var(--border);
+}
+.acc-field-label {
+  width: 96px;
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.acc-opts {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-4);
+  max-height: 96px;
+  overflow: auto;
+}
+.acc-opts label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.acc-save {
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  background: var(--brand-soft);
+  border-top: 1px solid var(--border);
+}
+/* ---- import review layout ---- */
+.import.is-review {
+  flex: 1;
+  min-height: 0;
+  max-width: 1100px;
+}
+.imp-line {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.imp-line .grow,
+.imp-bar-row .grow {
+  flex: 1;
+}
+.imp-review {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.imp-bar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+}
+.imp-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3) var(--sp-4);
+}
+.imp-review .acc-card {
+  flex: 1;
+  min-height: 240px;
+  margin-bottom: 0;
+}
+.imp-review .acc-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+.imp-invalid {
+  flex: none;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.imp-invalid summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.imp-invalid > div {
+  margin-top: var(--sp-2);
+  max-height: 200px;
+  overflow: auto;
+}

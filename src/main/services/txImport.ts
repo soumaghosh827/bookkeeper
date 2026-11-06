@@ -13,6 +13,24 @@ import {
   todayIso,
 } from "@shared/format";
 import { HIGH_VALUE_PAISE } from "@shared/rules";
+import {
+  COMPARE,
+  clean,
+  same,
+  newSeen,
+  addSeen,
+  buildFields,
+  sanitizeChoices,
+  applyAccountUpdate,
+  type AccField,
+  type FieldConflict,
+  type SeenMap,
+} from "./accountConflicts";
+export type {
+  AccField,
+  FieldCandidate,
+  FieldConflict,
+} from "./accountConflicts";
 
 export const TX_IMPORT_KEYS = [
   "payee",
@@ -33,12 +51,6 @@ const REQUIRED: [string, string][] = [
   ["account_no", "Account number"],
   ["amount_paise", "Amount"],
 ];
-const COMPARE = [
-  ["payee", "Beneficiary"],
-  ["bank", "Bank"],
-  ["branch", "Branch"],
-  ["ifsc", "IFSC"],
-] as const;
 
 // ---------- types (moved to shared/types.ts when the UI is wired up) ----------
 export interface TxImportFileInfo {
@@ -57,22 +69,9 @@ export type ExceptionKind =
   | "master_diff"
   | "file_conflict"
   | "zero_amount"
-  | "high_value";
+  | "high_value"
+  | "look_alike";
 
-export type AccField = "payee" | "bank" | "branch" | "ifsc";
-export interface FieldCandidate {
-  value: string;
-  source: "file" | "master";
-  rows: number[]; // Excel rows with this value (empty for master)
-  count: number;
-}
-export interface FieldConflict {
-  field: AccField;
-  label: string;
-  candidates: FieldCandidate[];
-  defaultValue: string; // what happens today if the user does nothing
-  current: string; // value stored in the database today ("" for a new account or an empty field)
-}
 export interface TxException {
   id: string; // used by the commit step for per-item decisions
   kind: ExceptionKind;
@@ -106,7 +105,7 @@ export interface PlannedAccount {
   existingInMaster: boolean;
   rows: number[];
   conflicts: string[];
-  seen: Record<AccField, Map<string, number[]>>; // field -> value -> Excel rows
+  seen: SeenMap; // field -> value -> Excel rows
 }
 export interface PlannedTx {
   row: number;
@@ -132,10 +131,6 @@ export interface TxImportPlan {
 
 // ---------- helpers ----------
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-const clean = (s: string | undefined, max = 200) =>
-  (s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
-const same = (a: string, b: string) =>
-  clean(a).toLowerCase() === clean(b).toLowerCase();
 const txKey = (no: string, paise: number, date: string, ref: string) =>
   [no, paise, date, ref.toLowerCase().replace(/\s+/g, "")].join("\u0001");
 
@@ -189,6 +184,7 @@ const SYNONYMS: Record<string, string[]> = {
     "amount",
     "amountrs",
     "amountinrs",
+    "amountinr",
     "amt",
     "netamount",
     "paymentamount",
@@ -391,34 +387,6 @@ interface DbAcc {
   in_master: number;
 }
 
-const buildFields = (g: PlannedAccount, cur?: DbAcc): FieldConflict[] => {
-  const out: FieldConflict[] = [];
-  for (const [f, label] of COMPARE) {
-    const cands: FieldCandidate[] = [...g.seen[f].entries()].map(
-      ([value, rows]) => ({
-        value,
-        source: "file" as const,
-        rows: rows.slice(0, 20),
-        count: rows.length,
-      }),
-    );
-    const dbVal = cur ? cur[f] : "";
-    const fileConflict = cands.length > 1;
-    const masterDiff = !!(cur && cands.length && !same(cands[0].value, dbVal));
-    if (!fileConflict && !masterDiff) continue;
-    if (dbVal && !cands.some((c) => same(c.value, dbVal)))
-      cands.unshift({ value: dbVal, source: "master", rows: [], count: 0 });
-    out.push({
-      field: f,
-      label,
-      candidates: cands,
-      defaultValue: g.values[f],
-      current: dbVal,
-    });
-  }
-  return out;
-};
-
 export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
   const s = session;
   if (!s) throw new Error("Nothing loaded. Start the import again.");
@@ -454,6 +422,14 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
     )
     .all() as DbAcc[])
     dbAcc.set(a.account_no, a);
+
+  // stored accounts by name + IFSC, to spot a new account number that looks like an existing one
+  const byNameIfsc = new Map<string, DbAcc>();
+  for (const a of dbAcc.values()) {
+    if (!a.ifsc) continue;
+    const k = clean(a.payee).toLowerCase() + "|" + a.ifsc;
+    if (!byNameIfsc.has(k) || a.in_master === 1) byNameIfsc.set(k, a);
+  }
 
   // pass 1: read, validate and group rows by account number
   interface Parsed {
@@ -525,12 +501,7 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
         existingInMaster: cur ? cur.in_master === 1 : false,
         rows: [],
         conflicts: [],
-        seen: {
-          payee: new Map(),
-          bank: new Map(),
-          branch: new Map(),
-          ifsc: new Map(),
-        },
+        seen: newSeen(),
       };
       groups.set(no, g);
     }
@@ -543,8 +514,7 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
     };
     for (const [f, label] of COMPARE) {
       if (!fv[f]) continue;
-      const key = [...g.seen[f].keys()].find((x) => same(x, fv[f])) ?? fv[f];
-      g.seen[f].set(key, [...(g.seen[f].get(key) ?? []), n]);
+      addSeen(g.seen, f, fv[f], n);
       if (!g.values[f])
         g.values[f] = fv[f]; // first non-empty value wins
       else if (!same(g.values[f], fv[f])) {
@@ -630,9 +600,32 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
     });
   };
 
+  const nameSeen = new Map<string, string>(); // name|IFSC -> first new account number in this file
+
   for (const g of groups.values()) {
+    if (!g.existingId && g.values.payee && g.values.ifsc) {
+      const k = clean(g.values.payee).toLowerCase() + "|" + g.values.ifsc;
+      const twin = byNameIfsc.get(k);
+      const earlier = nameSeen.get(k);
+      if (twin || earlier) {
+        const where = twin
+          ? [twin.bank, twin.branch].filter(Boolean).join(" · ")
+          : "";
+        exc({
+          id: `like:${g.account_no}`,
+          kind: "look_alike",
+          allRows: g.rows,
+          account_no: g.account_no,
+          payee: g.values.payee,
+          detail: twin
+            ? `Same name and IFSC as saved A/c ${twin.account_no}${where ? ` (${where})` : ""}`
+            : `Same name and IFSC as A/c ${earlier} earlier in this file`,
+        });
+      }
+      if (!earlier) nameSeen.set(k, g.account_no);
+    }
     const cur = g.existingId ? dbAcc.get(g.account_no) : undefined;
-    const fields = buildFields(g, cur);
+    const fields = buildFields(g.seen, g.values, cur);
     if (g.conflicts.length)
       exc({
         id: `conf:${g.account_no}`,
@@ -768,6 +761,7 @@ export interface TxImportResult {
   txAdded: number;
   txSkippedExisting: number;
   txSkippedUnconfirmed: number;
+  txSkippedLookAlike: number;
 }
 interface AccRow {
   id: string;
@@ -800,24 +794,20 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
   const now = new Date().toISOString();
   const confirmed = new Set(opts.confirmKinds ?? []);
   const dec = opts.decisions ?? {};
-  const choices = new Map<string, Partial<Record<AccField, string>>>();
-  for (const [no, c] of Object.entries(opts.fieldChoices ?? {})) {
-    if (!p.accounts.has(no)) continue;
-    const o: Partial<Record<AccField, string>> = {};
-    for (const [f] of COMPARE) {
-      if (typeof c?.[f] !== "string") continue;
-      const v = f === "ifsc" ? cleanIfsc(c[f]!) : clean(c[f]);
-      if (f === "ifsc" && v && !isValidIfsc(v))
-        throw new Error("Invalid IFSC choice");
-      if (v) o[f] = v;
-    }
-    if (Object.keys(o).length) choices.set(no, o);
-  }
+  const choices = sanitizeChoices(opts.fieldChoices, p.accounts);
   const diffIds = new Set(
     p.exceptions.filter((e) => e.kind === "master_diff").map((e) => e.id),
   );
+  const skipAccounts = new Set(
+    p.exceptions
+      .filter((e) => e.kind === "look_alike" && dec[e.id] === "skip")
+      .map((e) => e.account_no),
+  );
 
-  const wanted = (t: PlannedTx): "yes" | "exists" | "unconfirmed" => {
+  const wanted = (
+    t: PlannedTx,
+  ): "yes" | "exists" | "unconfirmed" | "lookalike" => {
+    if (skipAccounts.has(t.account_no)) return "lookalike";
     if (t.status === "exists" && opts.existingTx === "skip") return "exists";
     for (const id of t.flags) {
       const kind = id.startsWith("zero:") ? "zero_amount" : "high_value";
@@ -859,7 +849,8 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
       promoted = 0,
       txAdded = 0,
       skipEx = 0,
-      skipUn = 0;
+      skipUn = 0,
+      skipLike = 0;
 
     for (const t of p.txs) {
       const w = wanted(t);
@@ -869,6 +860,10 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
       }
       if (w === "unconfirmed") {
         skipUn++;
+        continue;
+      }
+      if (w === "lookalike") {
+        skipLike++;
         continue;
       }
 
@@ -895,40 +890,25 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
             diffIds.has(`diff:${g.account_no}`) &&
             (dec[`diff:${g.account_no}`] ?? opts.masterDiff) === "update";
           const pick = choices.get(g.account_no);
-          const doUpdate = ruleUpdate || !!pick;
+          const fieldsNext =
+            ruleUpdate || pick
+              ? applyAccountUpdate(cur, g, ruleUpdate, pick)
+              : null;
           const promote = cur.in_master === 0 && opts.newAccounts === "master";
-          if (doUpdate || promote) {
-            const next = {
+          if (fieldsNext || promote) {
+            const base = fieldsNext ?? {
               payee: cur.payee,
               bank: cur.bank,
               branch: cur.branch,
               ifsc: cur.ifsc,
               remarks: cur.remarks,
-              in_master: cur.in_master,
               extra: cur.extra,
             };
-            if (doUpdate) {
-              if (ruleUpdate) {
-                for (const f of [
-                  "payee",
-                  "bank",
-                  "branch",
-                  "ifsc",
-                  "remarks",
-                ] as const)
-                  if (g.values[f]) next[f] = g.values[f];
-                next.extra = JSON.stringify({
-                  ...JSON.parse(cur.extra || "{}"),
-                  ...g.extra,
-                });
-              }
-              if (pick) Object.assign(next, pick); // explicit choices win over the bulk rule
-            }
-            if (promote) next.in_master = 1;
+            const next = { ...base, in_master: promote ? 1 : cur.in_master };
             const { id: _id, ...prev } = cur;
             changes.push({ id, at: now, prev });
             updAcc.run({ ...next, id, now });
-            if (doUpdate) updated++;
+            if (fieldsNext) updated++;
             if (promote) promoted++;
           }
         }
@@ -971,6 +951,7 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
       txAdded,
       txSkippedExisting: skipEx,
       txSkippedUnconfirmed: skipUn,
+      txSkippedLookAlike: skipLike,
     };
   })();
   clearSession(); // a second click on Import cannot commit the same file twice

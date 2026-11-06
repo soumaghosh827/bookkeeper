@@ -40,6 +40,7 @@ const ALWAYS = ["payee", "amount_paise"];
 
 export default function TransactionsScreen({
   labels,
+  masterName,
   refreshKey,
   mode = "tab",
   onAddToList,
@@ -47,6 +48,7 @@ export default function TransactionsScreen({
   onMasterChanged,
 }: {
   labels: Labels;
+  masterName?: string;
   refreshKey: number;
   mode?: "tab" | "picker";
   onAddToList: (uids: string[]) => void | Promise<void>;
@@ -412,6 +414,7 @@ export default function TransactionsScreen({
       {importOpen && (
         <TxImportDialog
           labels={labels}
+          masterName={masterName}
           onClose={(changed) => {
             setImportOpen(false);
             if (changed) {

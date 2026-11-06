@@ -177,6 +177,7 @@ export default function App() {
         <section className="screen" hidden={tab !== "transactions"}>
           <TransactionsScreen
             labels={labels}
+            masterName={masterName}
             refreshKey={both}
             onAddToList={addToList}
             onChanged={bumpTx}

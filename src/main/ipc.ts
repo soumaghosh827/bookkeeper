@@ -120,11 +120,11 @@ export function registerIpc() {
   H("imp:paste", (_e, text, hasHeader) =>
     run(() => ({ ok: true, data: imp.loadPaste(db(), text, !!hasHeader) })),
   );
-  H("imp:preview", (_e, m) =>
-    run(() => ({ ok: true, data: imp.preview(db(), m) })),
+  H("imp:analyze", (_e, m) =>
+    run(() => ({ ok: true, data: imp.analyze(db(), m) })),
   );
-  H("imp:commit", (_e, m, o) =>
-    run(() => ({ ok: true, data: imp.commit(db(), m, o) })),
+  H("imp:commitplan", (_e, m, o) =>
+    run(() => ({ ok: true, data: imp.commitPlan(db(), m, o) })),
   );
   // ---- transactions import (Excel with transactions: fills accounts and transactions) ----
   H("tximp:pick", () =>

@@ -206,16 +206,40 @@ export interface ImportProblem {
   values: Record<string, string>;
   existing?: string;
 }
-export interface ImportPreview {
+export interface MasterAccountItem {
+  key: string; // account number, or "#<row>" for a row without one
+  account_no: string;
+  payee: string;
+  rows: number[];
+  rowCount: number;
+  isNew: boolean; // false = already in master
+  differs: boolean; // existing account whose details differ from the file
+  fields: FieldConflict[];
+  similar?: string; // new account that looks like one already stored / earlier in the file
+}
+export interface MasterAnalysis {
   total: number;
   fresh: number;
-  invalid: number;
-  duplicates: number;
+  existing: number;
+  unchanged: number;
+  noAccountNo: number;
   similar: number;
-  problems: ImportProblem[];
+  invalidCount: number;
+  invalid: ImportProblem[];
+  items: MasterAccountItem[];
 }
-export interface ImportOptions {
-  onDuplicate: "skip" | "add" | "update";
+export interface MasterCommitOptions {
+  existingRule?: "keep" | "update";
+  similarRule?: "add" | "skip";
+  decisions?: Record<string, "keep" | "update" | "add" | "skip">; // per account key
+  fieldChoices?: Record<string, Partial<Record<AccField, string>>>; // account key -> field -> chosen value
+}
+export interface MasterCommitResult {
+  added: number;
+  updated: number;
+  unchanged: number;
+  skipped: number;
+  invalid: number;
 }
 
 // ---- transactions import (one Excel file fills accounts and transactions) ----
@@ -235,7 +259,8 @@ export type TxImportExceptionKind =
   | "master_diff"
   | "file_conflict"
   | "zero_amount"
-  | "high_value";
+  | "high_value"
+  | "look_alike";
 
 export type AccField = "payee" | "bank" | "branch" | "ifsc";
 export interface FieldCandidate {
@@ -286,6 +311,7 @@ export interface TxImportResult {
   txAdded: number;
   txSkippedExisting: number;
   txSkippedUnconfirmed: number;
+  txSkippedLookAlike: number;
 }
 export interface TxUndoInfo {
   id: number;
@@ -504,11 +530,11 @@ export interface BookkeeperApi {
       text: string,
       hasHeader: boolean,
     ): Promise<Result<ImportFileInfo>>;
-    preview(mapping: ColumnMapping): Promise<Result<ImportPreview>>;
-    commit(
+    analyze(mapping: ColumnMapping): Promise<Result<MasterAnalysis>>;
+    commitPlan(
       mapping: ColumnMapping,
-      opts: ImportOptions,
-    ): Promise<Result<{ added: number; updated: number; skipped: number }>>;
+      opts: MasterCommitOptions,
+    ): Promise<Result<MasterCommitResult>>;
   };
   txImport: {
     pickFile(): Promise<Result<TxImportFileInfo>>;

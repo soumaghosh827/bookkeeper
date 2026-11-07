@@ -155,6 +155,14 @@ export function registerIpc() {
   H("tx:update", (_e, uid, ch, c) =>
     run(() => tx.updateTransaction(db(), String(uid), ch, c)),
   );
+  H("tx:correct", (_e, uid, ch, c, auth) =>
+    run(() =>
+      tx.correctTransaction(db(), String(uid), ch, c ?? {}, auth ?? {}, (p) =>
+        vault.verifyPassword(p),
+      ),
+    ),
+  );
+  H("tx:history", (_e, uid) => tx.txHistory(db(), String(uid)));
   H("tx:remove", (_e, uid) =>
     run(() => tx.removeTransaction(db(), String(uid))),
   );

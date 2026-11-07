@@ -13,6 +13,8 @@ import { fmtDate, formatPaise, parseAmount, parseDate } from "@shared/format";
 import DataGrid, { type GridCol } from "@/components/DataGrid";
 import NameDialog from "@/components/NameDialog";
 import AskDialog from "@/components/AskDialog";
+import CorrectDialog from "@/components/CorrectDialog";
+import HistoryDialog from "@/components/HistoryDialog";
 import { Toast, useToast } from "@/components/Toast";
 import { useConfirmFlow } from "@/lib/useConfirmFlow";
 import { useGridData } from "@/lib/useGridData";
@@ -62,6 +64,8 @@ export default function TransactionsScreen({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [nameDlg, setNameDlg] = useState(false);
   const [delRow, setDelRow] = useState<TxRow | null>(null);
+  const [fixRow, setFixRow] = useState<TxRow | null>(null);
+  const [histRow, setHistRow] = useState<TxRow | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [undo, setUndo] = useState<TxUndoInfo | null>(null);
   const [undoOpen, setUndoOpen] = useState(false);
@@ -183,6 +187,23 @@ export default function TransactionsScreen({
     g.patch((x) => x.uid === r.uid, res.data!);
     onChanged?.();
     return text(res.data!, c);
+  }
+
+  async function doCorrect(
+    r: TxRow,
+    changes: Pick<TxChanges, "amount_paise" | "entry_date" | "reference_no">,
+    auth: { password?: string; reason?: string },
+  ): Promise<boolean | string> {
+    const res = await withConfirm(
+      (conf) => window.api.transactions.correct(r.uid, changes, conf, auth),
+      { payee: r.payee, amountPaise: changes.amount_paise ?? r.amount_paise },
+    );
+    if (!res) return false; // cancelled at a confirmation: dialog stays open
+    if (!res.ok) return res.error ?? "Could not save";
+    g.patch((x) => x.uid === r.uid, res.data!);
+    onChanged?.();
+    show("Transaction corrected");
+    return true;
   }
 
   async function doDelete() {
@@ -327,23 +348,39 @@ export default function TransactionsScreen({
         onNeedMore={g.loadMore}
         selected={selected}
         onSelect={setSelected}
-        actionsW={picker ? 0 : 48}
+        actionsW={picker ? 0 : 128}
         actions={
           picker
             ? undefined
             : (r) => (
-                <button
-                  className="ghost danger"
-                  disabled={!canDelete(r.created_at)}
-                  title={
-                    canDelete(r.created_at)
-                      ? "Delete"
-                      : "Locked: older than 2 days"
-                  }
-                  onClick={() => setDelRow(r)}
-                >
-                  🗑
-                </button>
+                <>
+                  <button
+                    className="ghost"
+                    title="History"
+                    onClick={() => setHistRow(r)}
+                  >
+                    🕘
+                  </button>
+                  <button
+                    className="ghost"
+                    title="Correct amount, date or reference"
+                    onClick={() => setFixRow(r)}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    className="ghost danger"
+                    disabled={!canDelete(r.created_at)}
+                    title={
+                      canDelete(r.created_at)
+                        ? "Delete"
+                        : "Locked: older than 2 days"
+                    }
+                    onClick={() => setDelRow(r)}
+                  >
+                    🗑
+                  </button>
+                </>
               )
         }
         headerExtra={
@@ -367,17 +404,12 @@ export default function TransactionsScreen({
       />
       {!picker && (
         <div className="muted" style={{ fontSize: "var(--fs-sm)" }}>
-          Editable here:{" "}
-          {[
-            labels.reference_no,
-            labels.entry_date,
-            labels.amount_paise,
-            labels.utr,
-            labels.notes,
-          ].join(", ")}{" "}
-          and custom columns · {labels.payee}, bank, branch, account no and IFSC
-          are edited in master · filters: <code>&gt;5000</code>,{" "}
-          <code>100..500</code>, <code>&gt;=01/04/2026</code>
+          Editable here: {[labels.utr, labels.notes].join(", ")} and custom
+          columns · use ✎ to correct {labels.amount_paise}, {labels.entry_date}{" "}
+          or {labels.reference_no} · {labels.payee}, bank, branch, account no
+          and IFSC are edited in {masterName ?? "the accounts tab"} · filters:{" "}
+          <code>&gt;5000</code>, <code>100..500</code>,{" "}
+          <code>&gt;=01/04/2026</code>
         </div>
       )}
 
@@ -394,6 +426,24 @@ export default function TransactionsScreen({
           }}
         />
       )}
+
+      {histRow && (
+        <HistoryDialog
+          row={histRow}
+          labels={labels}
+          onClose={() => setHistRow(null)}
+        />
+      )}
+
+      {fixRow && (
+        <CorrectDialog
+          row={fixRow}
+          labels={labels}
+          onClose={() => setFixRow(null)}
+          onSubmit={(ch, auth) => doCorrect(fixRow, ch, auth)}
+        />
+      )}
+
       {delRow && (
         <AskDialog
           title="Delete this transaction?"
@@ -411,6 +461,7 @@ export default function TransactionsScreen({
           </p>
         </AskDialog>
       )}
+
       {importOpen && (
         <TxImportDialog
           labels={labels}
@@ -425,6 +476,7 @@ export default function TransactionsScreen({
           }}
         />
       )}
+
       {undoOpen && undo && (
         <AskDialog
           title="Undo the last import?"
@@ -452,6 +504,7 @@ export default function TransactionsScreen({
           )}
         </AskDialog>
       )}
+
       {element}
       <Toast t={toast} onClose={hide} />
     </>

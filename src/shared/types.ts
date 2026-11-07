@@ -62,13 +62,7 @@ export const TX_COLUMNS = [
   "utr",
   "notes",
 ] as const;
-export const TX_EDITABLE: readonly string[] = [
-  "reference_no",
-  "entry_date",
-  "amount_paise",
-  "utr",
-  "notes",
-];
+export const TX_EDITABLE: readonly string[] = ["utr", "notes"];
 
 export const customKey = (header: string) =>
   "x_" +
@@ -162,9 +156,17 @@ export interface TxCreate {
   extra?: Record<string, string>;
   add_to_preview?: boolean;
 }
+
 export type TxChanges = Partial<
   Pick<TxRow, "reference_no" | "entry_date" | "amount_paise" | "utr" | "notes">
 > & { extra?: Record<string, string> };
+
+export interface TxHistoryEntry {
+  at: string;
+  action: "create" | "update" | "delete";
+  changes: Record<string, [unknown, unknown]>;
+  reason: string | null;
+}
 
 export interface PreviewRow {
   uid: string;
@@ -551,6 +553,13 @@ export interface BookkeeperApi {
       changes: TxChanges,
       confirm?: Confirmations,
     ): Promise<Result<TxRow>>;
+    correct(
+      uid: string,
+      changes: Pick<TxChanges, "amount_paise" | "entry_date" | "reference_no">,
+      confirm?: Confirmations,
+      auth?: { password?: string; reason?: string },
+    ): Promise<Result<TxRow>>;
+    history(uid: string): Promise<TxHistoryEntry[]>;
     remove(uid: string): Promise<Result>;
     list(q: GridQuery): Promise<GridPage<TxRow>>;
     exportXlsx(q: GridQuery): Promise<Result<{ path: string; rows: number }>>;

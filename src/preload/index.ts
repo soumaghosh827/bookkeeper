@@ -43,6 +43,8 @@ const api: BookkeeperApi = {
   transactions: {
     create: (t, c) => inv("tx:create", t, c),
     update: (uid, ch, c) => inv("tx:update", uid, ch, c),
+    correct: (uid, ch, c, auth) => inv("tx:correct", uid, ch, c, auth),
+    history: (uid) => inv("tx:history", uid),
     remove: (uid) => inv("tx:remove", uid),
     list: (q) => inv("tx:list", q),
     exportXlsx: (q) => inv("tx:export", q),

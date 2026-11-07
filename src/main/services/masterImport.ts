@@ -53,7 +53,7 @@ const SYNONYMS: Record<AccountKey, string[]> = {
   ],
   bank: ["bank", "bankname", "nameofbank"],
   branch: ["branch", "branchname", "bankbranch"],
-  ifsc: ["ifsc", "ifsccode", "ifscno", "ifscnumber"],
+  ifsc: ["ifsc", "ifscode", "ifsccode", "ifscno", "ifscnumber"],
   remarks: [
     "remarks",
     "remark",

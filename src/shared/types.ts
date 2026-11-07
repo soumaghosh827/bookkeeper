@@ -340,6 +340,7 @@ export interface Template {
   description: string;
   has_file: boolean;
   updated_at: string;
+  format: string; // short output summary, e.g. "1 page" or "Letter only + Excel"
 }
 export interface TemplateText {
   key: string;
@@ -416,6 +417,20 @@ export const DEFAULT_PLAN: OutputPlan = {
     { id: "o1", kind: "docx", name: DEFAULT_FILE_NAME, table: "inline" },
   ],
 };
+
+/** Short, human label for what a template produces. Order follows the plan's outputs. */
+export function describePlan(plan: OutputPlan): string {
+  const parts = plan.outputs.map((o) =>
+    o.kind === "xlsx"
+      ? "Excel"
+      : o.table === "new_page"
+        ? "Table on page 2"
+        : o.table === "none"
+          ? "Letter only"
+          : "1 page",
+  );
+  return parts.length ? parts.join(" + ") : "No output";
+}
 
 const str = (v: unknown, max: number, fallback: string) =>
   typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fallback;

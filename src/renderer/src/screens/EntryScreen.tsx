@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Account,
   CustomColumn,
@@ -88,6 +88,29 @@ export default function EntryScreen({
   const [askClear, setAskClear] = useState(false);
   const [delRow, setDelRow] = useState<PreviewRow | null>(null);
   const [fieldDlg, setFieldDlg] = useState(false);
+
+  const tplGroups = useMemo(() => {
+    const m = new Map<string, Template[]>();
+    for (const t of tpls) m.set(t.format, [...(m.get(t.format) ?? []), t]);
+    return [...m.entries()];
+  }, [tpls]);
+  const tplSel = tpls.find((t) => t.id === tplId);
+
+  const refCheck = useMemo(() => {
+    const distinct = [
+      ...new Set(rows.map((r) => r.reference_no).filter(Boolean)),
+    ];
+    const blank = rows.filter((r) => !r.reference_no).length;
+    const shown =
+      distinct.slice(0, 3).join(", ") + (distinct.length > 3 ? ", …" : "");
+    let note = "";
+    if (distinct.length > 1)
+      note = `${distinct.length} different reference numbers${blank ? `, and ${blank} with none` : ""}. The document will print: ${shown}.`;
+    else if (distinct.length === 1 && blank)
+      note = `${blank} of ${rows.length} have no reference number. The document will show only: ${shown}.`;
+    return { note, none: rows.length > 0 && distinct.length === 0 };
+  }, [rows]);
+
   const refs = useRef<Record<string, HTMLInputElement | null>>({});
   const seq = useRef(0);
   const saving = useRef(false);
@@ -566,6 +589,24 @@ export default function EntryScreen({
                             ✓ report
                           </span>
                         )}
+                        {refCheck.note &&
+                          (r.reference_no ? (
+                            <div
+                              className="muted"
+                              style={{ fontSize: "var(--fs-xs)" }}
+                            >
+                              Ref: {r.reference_no}
+                            </div>
+                          ) : (
+                            <div
+                              style={{
+                                fontSize: "var(--fs-xs)",
+                                color: "var(--danger)",
+                              }}
+                            >
+                              No ref
+                            </div>
+                          ))}
                       </td>
                       <td className="r">{formatPaise(r.amount_paise)}</td>
                       <td>
@@ -583,6 +624,25 @@ export default function EntryScreen({
               </table>
             )}
           </div>
+          {refCheck.note && (
+            <div
+              className="notice"
+              style={{ margin: "0 var(--sp-3) var(--sp-2)" }}
+            >
+              {refCheck.note}
+            </div>
+          )}
+          {refCheck.none && (
+            <div
+              className="muted"
+              style={{
+                fontSize: "var(--fs-sm)",
+                margin: "0 var(--sp-3) var(--sp-2)",
+              }}
+            >
+              No reference number on these transactions.
+            </div>
+          )}
           <footer>
             <div className="pvtotal">
               <span className="muted">
@@ -599,11 +659,15 @@ export default function EntryScreen({
                 }
               >
                 <option value="">Choose template…</option>
-                {tpls.map((t) => (
-                  <option key={t.id} value={t.id} disabled={!t.has_file}>
-                    {t.name}
-                    {t.has_file ? "" : " (no file)"}
-                  </option>
+                {tplGroups.map(([format, list]) => (
+                  <optgroup key={format} label={format}>
+                    {list.map((t) => (
+                      <option key={t.id} value={t.id} disabled={!t.has_file}>
+                        {t.name}
+                        {t.has_file ? "" : " (no file)"}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
               <button
@@ -621,6 +685,15 @@ export default function EntryScreen({
                 Clear list
               </button>
             </div>
+            {tplSel && (
+              <div
+                className="muted"
+                style={{ fontSize: "var(--fs-sm)", marginTop: 6 }}
+                title={tplSel.name}
+              >
+                Output: {tplSel.format}
+              </div>
+            )}
           </footer>
         </section>
       </div>

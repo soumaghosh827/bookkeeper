@@ -2,6 +2,7 @@ import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
 import type { DB } from "../db";
 import {
+  describePlan,
   normalizePlan,
   type OutputPlan,
   type Result,
@@ -15,9 +16,12 @@ const toTpl = (r: any): Template => ({
   description: r.description,
   has_file: !!r.has_file,
   updated_at: r.updated_at,
+  format: describePlan(normalizePlan(r.output_plan)),
 });
+
 const SEL =
-  "SELECT id, name, description, (file IS NOT NULL) AS has_file, updated_at FROM templates";
+  "SELECT id, name, description, output_plan, (file IS NOT NULL) AS has_file, updated_at FROM templates";
+
 const get = (db: DB, id: number) =>
   toTpl(db.prepare(`${SEL} WHERE id = ?`).get(id));
 

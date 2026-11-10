@@ -14,6 +14,7 @@ import {
 } from "@shared/planSummary";
 import PlanPreview from "@/components/PlanPreview";
 import AskDialog from "@/components/AskDialog";
+import Icon from "@/components/Icon";
 import { Toast, useToast } from "@/components/Toast";
 
 const PLACEHOLDERS: [string, string][] = [
@@ -313,18 +314,20 @@ export default function TemplatesScreen({
                       <button
                         className="ghost small icon"
                         title="Move up"
+                        aria-label="Move up"
                         disabled={i === 0}
                         onClick={() => moveCol(i, -1)}
                       >
-                        ↑
+                        <Icon name="arrowUp" />
                       </button>
                       <button
                         className="ghost small icon"
                         title="Move down"
+                        aria-label="Move down"
                         disabled={i === plan.columns.length - 1}
                         onClick={() => moveCol(i, 1)}
                       >
-                        ↓
+                        <Icon name="arrowDown" />
                       </button>
                     </div>
                   ))}
@@ -363,11 +366,12 @@ export default function TemplatesScreen({
                       <button
                         className="ghost icon"
                         title="Remove"
+                        aria-label="Remove"
                         onClick={() =>
                           setTexts((x) => x.filter((_, j) => j !== i))
                         }
                       >
-                        ✕
+                        <Icon name="close" />
                       </button>
                     </div>
                   ))}
@@ -377,7 +381,7 @@ export default function TemplatesScreen({
                       setTexts((x) => [...x, { key: "", value: "" }])
                     }
                   >
-                    ＋ Add text
+                    <Icon name="add" className="ic-inline" /> Add text
                   </button>
 
                   <div className="help" style={{ marginTop: 16 }}>

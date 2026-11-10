@@ -9,6 +9,7 @@ import SettingsScreen from "./screens/SettingsScreen";
 import NameDialog from "./components/NameDialog";
 import { Toast, useToast } from "./components/Toast";
 import { applyTheme } from "./lib/theme";
+import Icon, { type IconName } from "./components/Icon";
 import AskDialog from "./components/AskDialog";
 
 type Tab = "entry" | "master" | "transactions" | "templates" | "settings";
@@ -119,19 +120,19 @@ export default function App() {
           : `${uids.length} added to the report list`,
       );
   };
-  const TABS: [Tab, string][] = [
-    ["entry", "Entry"],
-    ["master", masterName],
-    ["transactions", "Transactions"],
-    ["templates", "Templates"],
-    ["settings", "Settings"],
+  const TABS: [Tab, string, IconName][] = [
+    ["entry", "Entry", "entry"],
+    ["master", masterName, "accounts"],
+    ["transactions", "Transactions", "transactions"],
+    ["templates", "Templates", "templates"],
+    ["settings", "Settings", "settings"],
   ];
 
   return (
     <div className="app">
       <nav className="nav" aria-label="Main">
         <span className="brand">BookKeeper</span>
-        {TABS.map(([id, label], i) => (
+        {TABS.map(([id, label, icon], i) => (
           <button
             key={id}
             className={tab === id ? "active" : ""}
@@ -142,6 +143,7 @@ export default function App() {
               id === "master" ? () => setRenameMaster(true) : undefined
             }
           >
+            <Icon name={icon} />
             {label}
             {id === "entry" && count > 0 && (
               <span className="badge">{count}</span>
@@ -150,6 +152,7 @@ export default function App() {
         ))}
         <span className="spacer" />
         <button className="end" onClick={lock}>
+          <Icon name="lock" />
           Lock
         </button>
       </nav>

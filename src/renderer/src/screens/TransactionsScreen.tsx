@@ -15,6 +15,7 @@ import NameDialog from "@/components/NameDialog";
 import AskDialog from "@/components/AskDialog";
 import CorrectDialog from "@/components/CorrectDialog";
 import HistoryDialog from "@/components/HistoryDialog";
+import Icon from "@/components/Icon";
 import { Toast, useToast } from "@/components/Toast";
 import { useConfirmFlow } from "@/lib/useConfirmFlow";
 import { useGridData } from "@/lib/useGridData";
@@ -286,7 +287,9 @@ export default function TransactionsScreen({
           {selected.size ? ` (${selected.size})` : ""}
         </button>
         <div style={{ position: "relative" }}>
-          <button onClick={() => setColsOpen((o) => !o)}>Columns ▾</button>
+          <button onClick={() => setColsOpen((o) => !o)}>
+            Columns <Icon name="down" className="ic-inline" />
+          </button>
           {colsOpen && (
             <>
               <div className="popback" onClick={() => setColsOpen(false)} />
@@ -359,14 +362,14 @@ export default function TransactionsScreen({
                     title="History"
                     onClick={() => setHistRow(r)}
                   >
-                    🕘
+                    <Icon name="history" />
                   </button>
                   <button
                     className="ghost"
                     title="Correct amount, date or reference"
                     onClick={() => setFixRow(r)}
                   >
-                    ✎
+                    <Icon name="edit" />
                   </button>
                   <button
                     className="ghost danger"
@@ -378,7 +381,7 @@ export default function TransactionsScreen({
                     }
                     onClick={() => setDelRow(r)}
                   >
-                    🗑
+                    <Icon name="delete" />
                   </button>
                 </>
               )
@@ -390,7 +393,7 @@ export default function TransactionsScreen({
               title="Add custom column"
               onClick={() => setNameDlg(true)}
             >
-              ＋
+              <Icon name="add" />
             </button>
           )
         }
@@ -405,11 +408,11 @@ export default function TransactionsScreen({
       {!picker && (
         <div className="muted" style={{ fontSize: "var(--fs-sm)" }}>
           Editable here: {[labels.utr, labels.notes].join(", ")} and custom
-          columns · use ✎ to correct {labels.amount_paise}, {labels.entry_date}{" "}
-          or {labels.reference_no} · {labels.payee}, bank, branch, account no
-          and IFSC are edited in {masterName ?? "the accounts tab"} · filters:{" "}
-          <code>&gt;5000</code>, <code>100..500</code>,{" "}
-          <code>&gt;=01/04/2026</code>
+          columns · use <Icon name="edit" className="ic-inline" /> to correct{" "}
+          {labels.amount_paise}, {labels.entry_date} or {labels.reference_no} ·{" "}
+          {labels.payee}, bank, branch, account no and IFSC are edited in{" "}
+          {masterName ?? "the accounts tab"} · filters: <code>&gt;5000</code>,{" "}
+          <code>100..500</code>, <code>&gt;=01/04/2026</code>
         </div>
       )}
 

@@ -80,6 +80,8 @@
   /* density-controlled sizes */
   --row-h: 34px;
   --control-h: 32px;
+  --filter-h: 40px;
+  --icon-size: 16px;
   --nav-h: 46px;
   --motion: 120ms;
 }
@@ -87,6 +89,8 @@
 [data-density="compact"] {
   --row-h: 28px;
   --control-h: 28px;
+  --filter-h: 32px;
+  --icon-size: 14px;
   --fs-md: 12.5px;
   --fs-sm: 11.5px;
   --sp-3: 10px;

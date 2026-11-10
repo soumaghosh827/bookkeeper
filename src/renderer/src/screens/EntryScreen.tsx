@@ -22,6 +22,7 @@ import SuggestPanel from "@/components/SuggestPanel";
 import Modal from "@/components/Modal";
 import AskDialog from "@/components/AskDialog";
 import NameDialog from "@/components/NameDialog";
+import Icon from "@/components/Icon";
 import { Toast, useToast } from "@/components/Toast";
 import { useConfirmFlow } from "@/lib/useConfirmFlow";
 import TransactionsScreen from "./TransactionsScreen";
@@ -471,7 +472,10 @@ export default function EntryScreen({
           <div className="body">
             {locked && (
               <div className="picked">
-                <span>✓ Account from master</span>
+                <span>
+                  <Icon name="check" className="ic-inline" /> Account from
+                  master
+                </span>
                 <span className="grow" />
                 <button className="small" onClick={changeAccount}>
                   Change account
@@ -512,9 +516,10 @@ export default function EntryScreen({
               {field("reference_no", labels.reference_no, { span2: true })}
             </div>
             <button className="moretoggle" onClick={() => setMore((m) => !m)}>
+              <Icon name={more ? "minus" : "add"} className="ic-inline" />{" "}
               {more
-                ? "− Fewer fields"
-                : `+ More fields (${labels.utr}, ${labels.notes}${custom.length ? ", custom" : ""})`}
+                ? "Fewer fields"
+                : `More fields (${labels.utr}, ${labels.notes}${custom.length ? ", custom" : ""})`}
             </button>
             {more && (
               <div className="fgrid">
@@ -523,7 +528,7 @@ export default function EntryScreen({
                 {custom.map((c) => field(c.key, c.label))}
                 <div className="span2" style={{ marginBottom: 12 }}>
                   <button className="small" onClick={() => setFieldDlg(true)}>
-                    ＋ New field
+                    <Icon name="add" className="ic-inline" /> New field
                   </button>{" "}
                   <small>It will appear as a column in Transactions.</small>
                 </div>
@@ -586,7 +591,7 @@ export default function EntryScreen({
                             className="tag"
                             title="A report was already generated for this transaction"
                           >
-                            ✓ report
+                            <Icon name="check" className="ic-inline" /> report
                           </span>
                         )}
                         {refCheck.note &&
@@ -613,9 +618,10 @@ export default function EntryScreen({
                         <button
                           className="ghost small icon"
                           title="Remove from list"
+                          aria-label="Remove from list"
                           onClick={() => removeRow(r)}
                         >
-                          ✕
+                          <Icon name="close" />
                         </button>
                       </td>
                     </tr>

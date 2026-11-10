@@ -2,6 +2,16 @@
 import type { DB } from "../db";
 import ExcelJS from "exceljs";
 import type { SheetChoice } from "@shared/types";
+import { cleanIfsc, isValidIfsc } from "@shared/format";
+import {
+  COMPARE,
+  addSeen,
+  clean,
+  newSeen,
+  same,
+  type AccField,
+  type SeenMap,
+} from "./accountConflicts";
 
 /** "A/C No." -> "acno" */
 export const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -285,5 +295,144 @@ export function accountWriter(db: DB) {
     insert: (a: Record<string, unknown>) => void ins.run(a),
     /** Changes details and in_master. Needs id, payee, bank, branch, ifsc, remarks, in_master (0|1), extra (JSON text), now. */
     update: (a: Record<string, unknown>) => void upd.run(a),
+  };
+}
+
+// ---------- shared account index, reading and grouping (both imports) ----------
+export interface StoredAccount {
+  id: string;
+  payee: string;
+  bank: string;
+  branch: string;
+  account_no: string;
+  ifsc: string;
+  remarks: string;
+  in_master: number;
+  extra: string;
+  created_at: string;
+}
+export interface AccountIndex {
+  byNo: Map<string, StoredAccount>; // exact account number -> best stored account
+  byNameIfsc: Map<string, StoredAccount>; // name|IFSC -> best stored account (one-offs included)
+}
+export const nameIfscKey = (payee: string, ifsc: string) =>
+  clean(payee).toLowerCase() + "|" + ifsc;
+
+/** Every stored account, loaded once. Best = a master account over a one-off, then the oldest. */
+export function loadAccountIndex(db: DB): AccountIndex {
+  const rows = db
+    .prepare(
+      "SELECT id, payee, bank, branch, account_no, ifsc, remarks, in_master, extra, created_at FROM accounts WHERE account_no <> ''",
+    )
+    .all() as StoredAccount[];
+  const better = (a: StoredAccount, b: StoredAccount) =>
+    a.in_master !== b.in_master
+      ? a.in_master > b.in_master
+      : a.created_at < b.created_at;
+  const byNo = new Map<string, StoredAccount>();
+  for (const a of rows) {
+    const cur = byNo.get(a.account_no);
+    if (!cur || better(a, cur)) byNo.set(a.account_no, a);
+  }
+  const byNameIfsc = new Map<string, StoredAccount>();
+  for (const a of byNo.values()) {
+    if (!a.ifsc) continue;
+    const k = nameIfscKey(a.payee, a.ifsc);
+    const cur = byNameIfsc.get(k);
+    if (!cur || better(a, cur)) byNameIfsc.set(k, a);
+  }
+  return { byNo, byNameIfsc };
+}
+
+export interface AccountFields {
+  payee: string;
+  bank: string;
+  branch: string;
+  account_no: string;
+  ifsc: string;
+  remarks: string;
+}
+export interface AccountRead {
+  fields: AccountFields;
+  noAccount: boolean;
+  damaged: boolean; // the account number was already damaged by Excel
+  badIfsc: boolean;
+}
+
+/** Reads the five account fields from one row's values, cleaned the same way in every import. `risky` = Excel damaged the account-number cell. */
+export function readAccountFields(
+  v: Record<string, string>,
+  risky: boolean,
+): AccountRead {
+  const fields: AccountFields = {
+    payee: clean(v.payee),
+    bank: clean(v.bank),
+    branch: clean(v.branch),
+    account_no: cleanAccountNo(v.account_no),
+    ifsc: cleanIfsc(v.ifsc ?? ""),
+    remarks: clean(v.remarks, 500),
+  };
+  return {
+    fields,
+    noAccount: !fields.account_no,
+    damaged: !!fields.account_no && (risky || isDamagedText(fields.account_no)),
+    badIfsc: !!fields.ifsc && !isValidIfsc(fields.ifsc),
+  };
+}
+
+export interface AccountGroup {
+  account_no: string;
+  values: Record<AccField | "remarks", string>;
+  extra: Record<string, string>;
+  rows: number[];
+  conflicts: string[]; // "Bank: A / B" where rows of one account disagree
+  seen: SeenMap; // field -> value -> Excel rows
+}
+export const newGroup = (account_no: string): AccountGroup => ({
+  account_no,
+  values: { payee: "", bank: "", branch: "", ifsc: "", remarks: "" },
+  extra: {},
+  rows: [],
+  conflicts: [],
+  seen: newSeen(),
+});
+
+/** Adds one row to its account's group: the first non-empty value wins, disagreements are recorded. */
+export function addRowToGroup(
+  g: AccountGroup,
+  f: AccountFields,
+  row: number,
+): void {
+  g.rows.push(row);
+  for (const [field, label] of COMPARE) {
+    const val = f[field];
+    if (!val) continue;
+    addSeen(g.seen, field, val, row);
+    if (!g.values[field]) g.values[field] = val;
+    else if (!same(g.values[field], val)) {
+      const msg = `${label}: ${g.values[field]} / ${val}`;
+      if (!g.conflicts.includes(msg)) g.conflicts.push(msg);
+    }
+  }
+  if (!g.values.remarks) g.values.remarks = f.remarks;
+}
+
+/**
+ * Look-alike check for NEW accounts (call it once per new account, in file order):
+ * same name + IFSC as a stored account (one-offs included) or as an earlier new account in the file.
+ */
+export function twinChecker(index: AccountIndex) {
+  const earlier = new Map<string, string>(); // name|IFSC -> first new account number
+  return (
+    payee: string,
+    ifsc: string,
+    accountNo: string,
+  ): { stored?: StoredAccount; earlierNo?: string } | null => {
+    if (!payee || !ifsc) return null;
+    const k = nameIfscKey(payee, ifsc);
+    const stored = index.byNameIfsc.get(k);
+    const earlierNo = earlier.get(k);
+    if (!earlierNo) earlier.set(k, accountNo);
+    return stored || earlierNo ? { stored, earlierNo } : null;
   };
 }

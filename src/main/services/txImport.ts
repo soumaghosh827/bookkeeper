@@ -5,26 +5,17 @@ import { audit } from "./audit";
 import { refreshAccountStats } from "./accounts";
 import type { DB } from "../db";
 import type { Workbook } from "exceljs";
-import {
-  cleanIfsc,
-  formatPaise,
-  isValidIfsc,
-  parseDate,
-  todayIso,
-} from "@shared/format";
+import { formatPaise, parseDate, todayIso } from "@shared/format";
 import { HIGH_VALUE_PAISE } from "@shared/rules";
 import {
   COMPARE,
   clean,
   same,
-  newSeen,
-  addSeen,
   buildFields,
   sanitizeChoices,
   applyAccountUpdate,
   type AccField,
   type FieldConflict,
-  type SeenMap,
 } from "./accountConflicts";
 export type {
   AccField,
@@ -42,9 +33,7 @@ import type {
 } from "@shared/types";
 import {
   norm,
-  isDamagedText,
   DAMAGED_MSG,
-  cleanAccountNo,
   ACCOUNT_SYNONYMS,
   autoMapHeaders,
   findHeaderRow,
@@ -53,6 +42,12 @@ import {
   openWorkbook,
   readWorksheet,
   listSheets,
+  loadAccountIndex,
+  readAccountFields,
+  newGroup,
+  addRowToGroup,
+  twinChecker,
+  type AccountGroup,
   type SheetRow,
 } from "./importCore";
 
@@ -77,21 +72,9 @@ const REQUIRED: [string, string][] = [
 ];
 
 // ---------- plan (main process only; the types the UI sees live in shared/types.ts) ----------
-export interface PlannedAccount {
-  account_no: string;
-  values: {
-    payee: string;
-    bank: string;
-    branch: string;
-    ifsc: string;
-    remarks: string;
-  };
-  extra: Record<string, string>;
+export interface PlannedAccount extends AccountGroup {
   existingId: string | null;
   existingInMaster: boolean;
-  rows: number[];
-  conflicts: string[];
-  seen: SeenMap; // field -> value -> Excel rows
 }
 export interface PlannedTx {
   row: number;
@@ -293,15 +276,6 @@ export function selectSheet(db: DB, name: string): TxImportFileInfo {
 }
 
 // ---------- analysis ----------
-interface DbAcc {
-  id: string;
-  payee: string;
-  bank: string;
-  branch: string;
-  account_no: string;
-  ifsc: string;
-  in_master: number;
-}
 
 export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
   const s = session;
@@ -330,22 +304,8 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
   const accCol = mapping.indexOf("account_no");
   const today = todayIso();
 
-  // every account already in the database, keyed by account number (a master account wins over a one-off, the oldest wins among equals)
-  const dbAcc = new Map<string, DbAcc>();
-  for (const a of db
-    .prepare(
-      "SELECT id, payee, bank, branch, account_no, ifsc, in_master FROM accounts WHERE account_no <> '' ORDER BY in_master ASC, created_at DESC",
-    )
-    .all() as DbAcc[])
-    dbAcc.set(a.account_no, a);
-
-  // stored accounts by name + IFSC, to spot a new account number that looks like an existing one
-  const byNameIfsc = new Map<string, DbAcc>();
-  for (const a of dbAcc.values()) {
-    if (!a.ifsc) continue;
-    const k = clean(a.payee).toLowerCase() + "|" + a.ifsc;
-    if (!byNameIfsc.has(k) || a.in_master === 1) byNameIfsc.set(k, a);
-  }
+  // every stored account, loaded once (a master account wins over a one-off, the oldest wins among equals)
+  const index = loadAccountIndex(db);
 
   // pass 1: read, validate and group rows by account number
   interface Parsed {
@@ -376,12 +336,12 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
       rejected.push({ row: n, reason, values: v });
     };
 
-    const no = cleanAccountNo(v.account_no);
-    if (!no) {
+    const acc = readAccountFields(v, risky.includes(accCol));
+    if (acc.noAccount) {
       bad("Missing account number");
       continue;
     }
-    if (risky.includes(accCol)) {
+    if (acc.damaged) {
       bad(DAMAGED_MSG);
       continue;
     }
@@ -399,46 +359,26 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
       }
       date = d;
     }
-    const ifsc = cleanIfsc(v.ifsc ?? "");
-    if (ifsc && !isValidIfsc(ifsc)) {
+    if (acc.badIfsc) {
       bad("Invalid IFSC");
       continue;
     }
 
+    const no = acc.fields.account_no;
     let g = groups.get(no);
     if (!g) {
-      const cur = dbAcc.get(no);
+      const cur = index.byNo.get(no);
       g = {
-        account_no: no,
-        values: { payee: "", bank: "", branch: "", ifsc: "", remarks: "" },
-        extra: {},
+        ...newGroup(no),
         existingId: cur?.id ?? null,
         existingInMaster: cur ? cur.in_master === 1 : false,
-        rows: [],
-        conflicts: [],
-        seen: newSeen(),
       };
       groups.set(no, g);
     }
-    g.rows.push(n);
-    const fv = {
-      payee: clean(v.payee),
-      bank: clean(v.bank),
-      branch: clean(v.branch),
-      ifsc,
-    };
-    for (const [f, label] of COMPARE) {
-      if (!fv[f]) continue;
-      addSeen(g.seen, f, fv[f], n);
-      if (!g.values[f])
-        g.values[f] = fv[f]; // first non-empty value wins
-      else if (!same(g.values[f], fv[f])) {
-        const msg = `${label}: ${g.values[f]} / ${fv[f]}`;
-        if (!g.conflicts.includes(msg)) g.conflicts.push(msg);
-      }
-    }
-    if (!g.values.remarks) g.values.remarks = clean(v.remarks, 500);
+    addRowToGroup(g, acc.fields, n);
+
     const extra: Record<string, string> = {};
+
     for (const k of picked) {
       const val = clean(v[k], 500);
       if (!customScope.has(k) || !val) continue;
@@ -446,6 +386,7 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
         if (!g.extra[k]) g.extra[k] = val;
       } else extra[k] = val;
     }
+
     parsed.push({
       n,
       v,
@@ -515,31 +456,29 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
     });
   };
 
-  const nameSeen = new Map<string, string>(); // name|IFSC -> first new account number in this file
+  const twinOf = twinChecker(index);
 
   for (const g of groups.values()) {
-    if (!g.existingId && g.values.payee && g.values.ifsc) {
-      const k = clean(g.values.payee).toLowerCase() + "|" + g.values.ifsc;
-      const twin = byNameIfsc.get(k);
-      const earlier = nameSeen.get(k);
-      if (twin || earlier) {
-        const where = twin
-          ? [twin.bank, twin.branch].filter(Boolean).join(" · ")
-          : "";
-        exc({
-          id: `like:${g.account_no}`,
-          kind: "look_alike",
-          allRows: g.rows,
-          account_no: g.account_no,
-          payee: g.values.payee,
-          detail: twin
-            ? `Same name and IFSC as saved A/c ${twin.account_no}${where ? ` (${where})` : ""}`
-            : `Same name and IFSC as A/c ${earlier} earlier in this file`,
-        });
-      }
-      if (!earlier) nameSeen.set(k, g.account_no);
+    const like = g.existingId
+      ? null
+      : twinOf(g.values.payee, g.values.ifsc, g.account_no);
+    if (like) {
+      const { stored: twin, earlierNo: earlier } = like;
+      const where = twin
+        ? [twin.bank, twin.branch].filter(Boolean).join(" · ")
+        : "";
+      exc({
+        id: `like:${g.account_no}`,
+        kind: "look_alike",
+        allRows: g.rows,
+        account_no: g.account_no,
+        payee: g.values.payee,
+        detail: twin
+          ? `Same name and IFSC as saved A/c ${twin.account_no}${where ? ` (${where})` : ""}`
+          : `Same name and IFSC as A/c ${earlier} earlier in this file`,
+      });
     }
-    const cur = g.existingId ? dbAcc.get(g.account_no) : undefined;
+    const cur = g.existingId ? index.byNo.get(g.account_no) : undefined;
     const fields = buildFields(g.seen, g.values, cur);
     if (g.conflicts.length)
       exc({
@@ -589,7 +528,7 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
     const flags: string[] = [];
     if (status === "fresh") {
       const payee =
-        groups.get(p.no)?.values.payee || dbAcc.get(p.no)?.payee || "";
+        groups.get(p.no)?.values.payee || index.byNo.get(p.no)?.payee || "";
       if (p.paise === 0) {
         flags.push(`zero:${p.n}`);
         exc({

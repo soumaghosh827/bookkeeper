@@ -16,23 +16,17 @@ import {
   type MasterCommitResult,
   type SheetChoice,
 } from "@shared/types";
-import { cleanIfsc, isValidIfsc } from "@shared/format";
 import {
   COMPARE,
   same,
-  newSeen,
-  addSeen,
   buildFields,
-  type AccField,
+  clean,
   type FieldConflict,
-  type SeenMap,
   sanitizeChoices,
   applyAccountUpdate,
 } from "./accountConflicts";
 import {
-  isDamagedText,
   DAMAGED_MSG,
-  cleanAccountNo,
   ACCOUNT_SYNONYMS,
   autoMapHeaders,
   findHeaderRow,
@@ -40,8 +34,15 @@ import {
   readWorksheet,
   listSheets,
   saveHeaderMappings,
-  accountFinder,
   accountWriter,
+  loadAccountIndex,
+  readAccountFields,
+  newGroup,
+  addRowToGroup,
+  twinChecker,
+  type AccountGroup,
+  type AccountIndex,
+  type StoredAccount,
 } from "./importCore";
 
 const SYNONYMS: Record<AccountKey, string[]> = {
@@ -244,41 +245,31 @@ function readRows(mapping: ColumnMapping) {
     mapping.forEach((k, i) => {
       if (k) v[k] = cells[i] ?? "";
     });
-    const a = {
-      payee: (v.payee ?? "").trim(),
-      bank: (v.bank ?? "").trim(),
-      branch: (v.branch ?? "").trim(),
-      account_no: cleanAccountNo(v.account_no),
-      ifsc: cleanIfsc(v.ifsc ?? ""),
-      remarks: (v.remarks ?? "").trim(),
-    };
+    const r = readAccountFields(v, risky.includes(accCol));
+    const a = r.fields;
     const extra: Record<string, string> = {};
-    for (const k of picked)
-      if (isCustomKey(k) && v[k]?.trim()) extra[k] = v[k].trim();
+    for (const k of picked) {
+      const val = clean(v[k], 500);
+      if (isCustomKey(k) && val) extra[k] = val;
+    }
 
     const issues: string[] = [];
     if (!a.payee) issues.push("Missing beneficiary");
-    if (!a.account_no) issues.push("Account number required");
-    if (a.ifsc && !isValidIfsc(a.ifsc)) issues.push("Invalid IFSC");
-    if (a.account_no && (risky.includes(accCol) || isDamagedText(a.account_no)))
-      issues.push(DAMAGED_MSG);
+    if (r.noAccount) issues.push("Account number required");
+    if (r.badIfsc) issues.push("Invalid IFSC");
+    if (r.damaged) issues.push(DAMAGED_MSG);
     return { n, v, a, extra, issues };
   });
 }
 
-interface Group {
+interface Group extends AccountGroup {
   key: string;
-  account_no: string;
-  rows: number[];
-  values: Record<AccField | "remarks", string>;
-  extra: Record<string, string>;
-  seen: SeenMap;
-  existing: any | null;
+  existing: StoredAccount | null;
 }
 
 function groupRows(db: DB, mapping: ColumnMapping) {
   const rows = readRows(mapping);
-  const find = accountFinder(db);
+  const index = loadAccountIndex(db);
   const groups = new Map<string, Group>();
   const invalid: typeof rows = [];
   for (const r of rows) {
@@ -289,62 +280,43 @@ function groupRows(db: DB, mapping: ColumnMapping) {
     const key = r.a.account_no;
     let g = groups.get(key);
     if (!g) {
-      g = {
-        key,
-        account_no: r.a.account_no,
-        rows: [],
-        values: { payee: "", bank: "", branch: "", ifsc: "", remarks: "" },
-        extra: {},
-        seen: newSeen(),
-        existing: find(r.a.account_no),
-      };
+      g = { ...newGroup(key), key, existing: index.byNo.get(key) ?? null };
       groups.set(key, g);
     }
-    g.rows.push(r.n);
-    for (const [f] of COMPARE) {
-      if (!r.a[f]) continue;
-      if (!g.values[f]) g.values[f] = r.a[f];
-      addSeen(g.seen, f, r.a[f], r.n);
-    }
-    if (r.a.remarks && !g.values.remarks) g.values.remarks = r.a.remarks;
+    addRowToGroup(g, r.a, r.n);
     for (const [k, val] of Object.entries(r.extra))
       if (!(k in g.extra)) g.extra[k] = val;
   }
-  return { total: rows.length, groups: [...groups.values()], invalid };
+  return { total: rows.length, groups: [...groups.values()], invalid, index };
 }
 
-/** New accounts (no stored match by account number) whose name + IFSC match a stored account or an earlier row of the file. */
-function similarNotes(db: DB, groups: Group[]): Map<string, string> {
-  const q = db.prepare(
-    "SELECT payee, bank, branch, account_no FROM accounts WHERE in_master = 1 AND lower(payee) = lower(?) AND ifsc = ? LIMIT 1",
-  );
-  const seen = new Set<string>();
+/** New accounts whose name + IFSC match a stored account (one-offs included) or an earlier new account in the file. */
+function similarNotes(
+  index: AccountIndex,
+  groups: Group[],
+): Map<string, string> {
+  const twinOf = twinChecker(index);
   const out = new Map<string, string>();
   for (const g of groups) {
-    if (g.existing || !g.values.ifsc) continue;
-    const sk = g.values.payee.toLowerCase() + "|" + g.values.ifsc;
-    const soft = q.get(g.values.payee, g.values.ifsc) as any;
-    if (soft)
-      out.set(
-        g.key,
-        [
-          soft.payee,
-          soft.bank,
-          soft.branch,
-          soft.account_no ? `A/c ${soft.account_no}` : "",
-        ]
-          .filter(Boolean)
-          .join(" · "),
-      );
-    else if (seen.has(sk)) out.set(g.key, "Earlier row in this file");
-    seen.add(sk);
+    if (g.existing) continue;
+    const like = twinOf(g.values.payee, g.values.ifsc, g.account_no);
+    if (!like) continue;
+    const s = like.stored;
+    out.set(
+      g.key,
+      s
+        ? [s.payee, s.bank, s.branch, s.account_no ? `A/c ${s.account_no}` : ""]
+            .filter(Boolean)
+            .join(" · ")
+        : "Earlier row in this file",
+    );
   }
   return out;
 }
 
 export function analyze(db: DB, mapping: ColumnMapping): MasterAnalysis {
-  const { total, groups, invalid } = groupRows(db, mapping);
-  const notes = similarNotes(db, groups);
+  const { total, groups, invalid, index } = groupRows(db, mapping);
+  const notes = similarNotes(index, groups);
   const items: MasterAccountItem[] = [];
   let fresh = 0,
     existing = 0,
@@ -353,15 +325,14 @@ export function analyze(db: DB, mapping: ColumnMapping): MasterAnalysis {
 
   for (const g of groups) {
     const fields = buildFields(g.seen, g.values, g.existing ?? undefined);
+    const ex = g.existing;
     let differs = false;
-    if (g.existing) {
+    if (ex) {
       existing++;
-      if (g.existing.in_master === 0) promote++;
+      if (ex.in_master === 0) promote++;
       differs = !!(
-        COMPARE.some(
-          ([f]) => g.values[f] && !same(g.values[f], g.existing[f]),
-        ) ||
-        (g.values.remarks && !same(g.values.remarks, g.existing.remarks))
+        COMPARE.some(([f]) => g.values[f] && !same(g.values[f], ex[f])) ||
+        (g.values.remarks && !same(g.values.remarks, ex.remarks))
       );
       if (!differs) unchanged++;
     } else {
@@ -405,13 +376,13 @@ export function commitPlan(
   mapping: ColumnMapping,
   opts: MasterCommitOptions,
 ): MasterCommitResult {
-  const { groups, invalid } = groupRows(db, mapping);
+  const { groups, invalid, index } = groupRows(db, mapping);
   const headers = session!.headers;
   const now = new Date().toISOString();
   const rule = opts.existingRule === "update" ? "update" : "keep";
   const dec = opts.decisions ?? {};
   const sim = opts.similarRule === "add" ? "add" : "skip";
-  const notes = similarNotes(db, groups);
+  const notes = similarNotes(index, groups);
 
   // only explicit picks for accounts in this file, cleaned and validated
   const keys = new Set(groups.map((g) => g.key));

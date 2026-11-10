@@ -1,10 +1,10 @@
 // Transactions Excel import, step 2: load the file and ANALYSE it. Nothing here writes to the database.
 // The commit and undo steps (next files) read the result through getPlan().
-import ExcelJS from "exceljs";
 import { randomUUID } from "crypto";
 import { audit } from "./audit";
 import { refreshAccountStats } from "./accounts";
 import type { DB } from "../db";
+import type { Workbook } from "exceljs";
 import {
   cleanIfsc,
   formatPaise,
@@ -31,6 +31,30 @@ export type {
   FieldCandidate,
   FieldConflict,
 } from "./accountConflicts";
+import type {
+  TxImportFileInfo,
+  TxImportAnalysis,
+  TxImportOptions,
+  TxImportResult,
+  TxImportRejected as Rejected,
+  TxImportException as TxException,
+  SheetChoice,
+} from "@shared/types";
+import {
+  norm,
+  isDamagedText,
+  DAMAGED_MSG,
+  cleanAccountNo,
+  ACCOUNT_SYNONYMS,
+  autoMapHeaders,
+  findHeaderRow,
+  saveHeaderMappings,
+  accountWriter,
+  openWorkbook,
+  readWorksheet,
+  listSheets,
+  type SheetRow,
+} from "./importCore";
 
 export const TX_IMPORT_KEYS = [
   "payee",
@@ -52,45 +76,7 @@ const REQUIRED: [string, string][] = [
   ["amount_paise", "Amount"],
 ];
 
-// ---------- types (moved to shared/types.ts when the UI is wired up) ----------
-export interface TxImportFileInfo {
-  source: string;
-  headers: string[];
-  rowCount: number;
-  headerRow: number; // Excel row the headers were found in; rows above it are titles or blanks
-  mapping: (string | null)[];
-}
-export interface Rejected {
-  row: number;
-  reason: string;
-  values: Record<string, string>;
-}
-export type ExceptionKind =
-  | "master_diff"
-  | "file_conflict"
-  | "zero_amount"
-  | "high_value"
-  | "look_alike";
-
-export interface TxException {
-  id: string; // used by the commit step for per-item decisions
-  kind: ExceptionKind;
-  rows: number[]; // Excel row numbers (first 20)
-  rowCount: number;
-  account_no: string;
-  payee: string;
-  detail: string;
-  fields?: FieldConflict[]; // only for file_conflict / master_diff
-}
-export interface TxImportAnalysis {
-  total: number;
-  dateMode: "column" | "today"; // 'today' = no date column mapped, every row gets today's date
-  accounts: { new: number; existing: number; oneOffExisting: number };
-  transactions: { fresh: number; exists: number; twinGroups: number };
-  rejectedCount: number;
-  rejected: Rejected[]; // first 200
-  exceptions: TxException[];
-}
+// ---------- plan (main process only; the types the UI sees live in shared/types.ts) ----------
 export interface PlannedAccount {
   account_no: string;
   values: {
@@ -130,37 +116,12 @@ export interface TxImportPlan {
 }
 
 // ---------- helpers ----------
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 const txKey = (no: string, paise: number, date: string, ref: string) =>
   [no, paise, date, ref.toLowerCase().replace(/\s+/g, "")].join("\u0001");
 
 // In a transactions file a "Remarks" column belongs to each row, so it maps to Notes (changeable in the mapping screen).
 const SYNONYMS: Record<string, string[]> = {
-  payee: [
-    "payee",
-    "payeename",
-    "name",
-    "beneficiary",
-    "beneficiaryname",
-    "nameofpayee",
-    "nameofbeneficiary",
-    "accountholder",
-    "accountholdername",
-  ],
-  account_no: [
-    "acno",
-    "accno",
-    "accountno",
-    "accountnumber",
-    "acnumber",
-    "bankaccountno",
-    "bankacno",
-    "beneficiaryaccountno",
-    "beneficiaryaccountnumber",
-  ],
-  bank: ["bank", "bankname", "nameofbank"],
-  branch: ["branch", "branchname", "bankbranch"],
-  ifsc: ["ifsc", "ifscode", "ifsccode", "ifscno", "ifscnumber"],
+  ...ACCOUNT_SYNONYMS,
   reference_no: [
     "referenceno",
     "refno",
@@ -254,26 +215,16 @@ function parseAmountPaise(
   return { ok: true, paise };
 }
 
-/** Raw cell value, not the displayed text: numbers keep every decimal, dates arrive as ISO, long numbers are flagged. */
-function readCell(c: ExcelJS.Cell): { text: string; risky: boolean } {
-  let v: unknown = c.value;
-  if (v && typeof v === "object" && !(v instanceof Date) && "result" in v)
-    v = (v as { result?: unknown }).result; // formula
-  if (v instanceof Date)
-    return { text: v.toISOString().slice(0, 10), risky: false };
-  if (typeof v === "number")
-    return { text: String(v), risky: Math.abs(v) >= 1e15 }; // 15+ digits: Excel has already lost digits
-  const text = (c.text ?? "").trim();
-  return { text, risky: /^\d(\.\d+)?e\+\d+$/i.test(text) };
-}
-
 // ---------- session ----------
-interface Row {
-  n: number;
-  cells: string[];
-  risky: number[];
-}
-let session: { source: string; headers: string[]; rows: Row[] } | null = null;
+type Row = SheetRow;
+let session: {
+  source: string;
+  headers: string[];
+  rows: Row[];
+  wb: Workbook;
+  sheets: SheetChoice[];
+  sheet: string;
+} | null = null;
 let plan: TxImportPlan | null = null;
 export const getPlan = () => plan;
 export const clearSession = () => {
@@ -282,98 +233,63 @@ export const clearSession = () => {
 };
 
 function autoMap(db: DB, headers: string[]): (string | null)[] {
-  const custom = db
-    .prepare("SELECT key, label FROM custom_fields WHERE archived = 0")
-    .all() as { key: string; label: string }[];
-  const customKeys = new Set(custom.map((c) => c.key));
-  const byLabel = new Map(custom.map((c) => [norm(c.label), c.key]));
-  const saved = new Map(
-    (
-      db.prepare("SELECT header, field_key FROM import_mappings").all() as {
-        header: string;
-        field_key: string;
-      }[]
-    ).map((r) => [r.header, r.field_key]),
-  );
-  const used = new Set<string>();
-  return headers.map((h) => {
-    const n = norm(h);
-    const key = saved.get(n) ?? SYN.get(n) ?? byLabel.get(n);
-    if (!key || used.has(key) || !(KEYS.includes(key) || customKeys.has(key)))
-      return null;
-    used.add(key);
-    return key;
-  });
+  return autoMapHeaders(db, headers, SYN, KEYS);
 }
 
-/** Finds the header row: the row (within the first 40) matching the most DIFFERENT known column names. Titles, sub-titles and merged banners match nothing. */
 function findHeaderIndex(db: DB, grid: Row[]): number {
-  const known = new Map<string, string>();
-  for (const c of db
-    .prepare("SELECT key, label FROM custom_fields WHERE archived = 0")
-    .all() as { key: string; label: string }[])
-    known.set(norm(c.label), c.key);
-  for (const [n, k] of SYN) known.set(n, k);
-  for (const r of db
-    .prepare("SELECT header, field_key FROM import_mappings")
-    .all() as { header: string; field_key: string }[])
-    known.set(r.header, r.field_key);
+  return findHeaderRow(
+    db,
+    grid.map((r) => r.cells),
+    SYN,
+  );
+}
 
-  let best = -1,
-    bestScore = 0;
-  for (let i = 0; i < Math.min(grid.length, 40); i++) {
-    const keys = new Set<string>(); // distinct fields, so a title merged across many cells cannot score high
-    for (const c of grid[i].cells) {
-      const k = known.get(norm(c));
-      if (k) keys.add(k);
-    }
-    if (keys.size > bestScore) {
-      best = i;
-      bestScore = keys.size;
-    } // earliest row wins a tie
-  }
-  if (bestScore >= 2) return best;
-  // nothing recognisable: first row with at least 3 different filled cells (skips a title merged across the sheet)
-  const i = grid.findIndex((r) => new Set(r.cells.filter(Boolean)).size >= 3);
-  return i >= 0 ? i : 0;
+/** Loads one sheet of the open workbook into the session and returns what the mapping screen needs. */
+function loadSheet(
+  db: DB,
+  wb: Workbook,
+  source: string,
+  sheets: SheetChoice[],
+  name: string,
+): TxImportFileInfo {
+  const ws = wb.getWorksheet(name);
+  if (!ws) throw new Error("Sheet not found");
+  const grid = readWorksheet(ws);
+  if (grid.length < 2)
+    throw new Error("This sheet needs a header row and at least one data row");
+  const hi = findHeaderIndex(db, grid);
+  const headers = grid[hi].cells.map((h, i) => h || `Column ${i + 1}`);
+  const rows = grid.slice(hi + 1).filter((r) => r.cells.some((x) => x !== ""));
+  if (!rows.length)
+    throw new Error("No data rows found below the header row of this sheet");
+  session = { source, headers, rows, wb, sheets, sheet: name };
+  plan = null;
+  return {
+    source,
+    sheet: name,
+    sheets,
+    headers,
+    rowCount: rows.length,
+    headerRow: grid[hi].n,
+    mapping: autoMap(db, headers),
+  };
 }
 
 export async function loadFile(
   db: DB,
   filePath: string,
 ): Promise<TxImportFileInfo> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(filePath);
-  const ws = wb.worksheets[0];
-  if (!ws) throw new Error("No sheet found in file");
-  const width = ws.columnCount;
-  const grid: Row[] = [];
-  ws.eachRow({ includeEmpty: false }, (row, n) => {
-    const cells: string[] = [],
-      risky: number[] = [];
-    for (let c = 1; c <= width; c++) {
-      const r = readCell(row.getCell(c));
-      cells.push(r.text);
-      if (r.risky) risky.push(c - 1);
-    }
-    if (cells.some((x) => x !== "")) grid.push({ n, cells, risky }); // styled but empty rows are ignored
-  });
-  if (grid.length < 2)
-    throw new Error("Need a header row and at least one data row");
-  const hi = findHeaderIndex(db, grid);
-  const headers = grid[hi].cells.map((h, i) => h || `Column ${i + 1}`);
-  const rows = grid.slice(hi + 1).filter((r) => r.cells.some((x) => x !== ""));
-  if (!rows.length) throw new Error("No data rows found below the header row");
+  const wb = await openWorkbook(filePath);
+  const sheets = listSheets(db, wb, SYN);
+  const first = sheets.find((s) => s.recommended) ?? sheets[0];
   const source = filePath.split(/[\\/]/).pop()!;
-  session = { source, headers, rows };
-  plan = null;
-  return {
-    source,
-    headers,
-    rowCount: rows.length,
-    headerRow: grid[hi].n,
-    mapping: autoMap(db, headers),
-  };
+  return loadSheet(db, wb, source, sheets, first.name);
+}
+
+/** The person picked another sheet: reload headers, rows and auto-mapping from it. */
+export function selectSheet(db: DB, name: string): TxImportFileInfo {
+  if (!session) throw new Error("Nothing loaded. Start the import again.");
+  return loadSheet(db, session.wb, session.source, session.sheets, name);
 }
 
 // ---------- analysis ----------
@@ -447,27 +363,26 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
   const groups = new Map<string, PlannedAccount>();
   const parsed: Parsed[] = [];
 
-  for (const { n, cells, risky } of s.rows) {
+  for (const { n, cells, raws, risky } of s.rows) {
     const v: Record<string, string> = {};
     mapping.forEach((k, i) => {
-      if (k) v[k] = cells[i] ?? "";
+      // amount and date read the raw value; every other column reads the displayed text
+      if (k)
+        v[k] =
+          (k === "amount_paise" || k === "entry_date" ? raws[i] : cells[i]) ??
+          "";
     });
     const bad = (reason: string) => {
       rejected.push({ row: n, reason, values: v });
     };
 
-    const no = (v.account_no ?? "")
-      .replace(/\s/g, "")
-      .replace(/^'/, "")
-      .slice(0, 60);
+    const no = cleanAccountNo(v.account_no);
     if (!no) {
       bad("Missing account number");
       continue;
     }
     if (risky.includes(accCol)) {
-      bad(
-        "Account number damaged by Excel (long number). Format the column as Text, re-enter it and save again",
-      );
+      bad(DAMAGED_MSG);
       continue;
     }
     const amt = parseAmountPaise(v.amount_paise ?? "");
@@ -745,24 +660,6 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
 }
 
 // ---------- commit ----------
-export interface TxImportOptions {
-  newAccounts: "master" | "oneoff"; // where accounts that do not exist yet go (also promotes matched one-off accounts when 'master')
-  masterDiff: "keep" | "update"; // bulk rule for existing accounts whose file details differ from master
-  existingTx: "skip" | "import"; // rows the database already has
-  confirmKinds?: ("zero_amount" | "high_value")[]; // kinds the user ticked for all rows
-  decisions?: Record<string, "import" | "skip" | "update" | "keep">; // per-exception overrides by exception id
-  fieldChoices?: Record<string, Partial<Record<AccField, string>>>; // account_no -> field -> chosen value
-}
-export interface TxImportResult {
-  batchId: number;
-  accountsAdded: number;
-  accountsUpdated: number;
-  accountsPromoted: number;
-  txAdded: number;
-  txSkippedExisting: number;
-  txSkippedUnconfirmed: number;
-  txSkippedLookAlike: number;
-}
 interface AccRow {
   id: string;
   payee: string;
@@ -820,22 +717,13 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
   const insBatch = db.prepare(
     "INSERT INTO import_batches (created_at, file_name) VALUES (?, ?)",
   );
-  const insAcc = db.prepare(
-    `INSERT INTO accounts (id, payee, bank, branch, account_no, ifsc, remarks, in_master, extra, created_at, updated_at, batch_id)
-     VALUES (@id, @payee, @bank, @branch, @account_no, @ifsc, @remarks, @in_master, @extra, @now, @now, @batch)`,
-  );
   const getAcc = db.prepare(
     "SELECT id, payee, bank, branch, ifsc, remarks, in_master, extra, updated_at FROM accounts WHERE id = ?",
   );
-  const updAcc = db.prepare(
-    "UPDATE accounts SET payee=@payee, bank=@bank, branch=@branch, ifsc=@ifsc, remarks=@remarks, in_master=@in_master, extra=@extra, updated_at=@now WHERE id=@id",
-  );
+  const writer = accountWriter(db);
   const insTx = db.prepare(
     `INSERT INTO transactions (uid, account_id, amount_paise, reference_no, utr, notes, entry_date, extra, created_at, updated_at, batch_id)
      VALUES (@uid, @account_id, @amount, @ref, @utr, @notes, @date, @extra, @now, @now, @batch)`,
-  );
-  const saveMap = db.prepare(
-    "INSERT OR REPLACE INTO import_mappings(header, field_key) VALUES (?, ?)",
   );
 
   let result!: TxImportResult;
@@ -872,7 +760,7 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
         const g = p.accounts.get(t.account_no)!;
         if (!g.existingId) {
           id = randomUUID();
-          insAcc.run({
+          writer.insert({
             id,
             ...g.values,
             ...(choices.get(g.account_no) ?? {}),
@@ -907,7 +795,7 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
             const next = { ...base, in_master: promote ? 1 : cur.in_master };
             const { id: _id, ...prev } = cur;
             changes.push({ id, at: now, prev });
-            updAcc.run({ ...next, id, now });
+            writer.update({ ...next, id, now });
             if (fieldsNext) updated++;
             if (promote) promoted++;
           }
@@ -931,9 +819,7 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
     }
 
     for (const id of touched) refreshAccountStats(db, id);
-    p.mapping.forEach((k, i) => {
-      if (k) saveMap.run(norm(p.headers[i]), k);
-    }); // the next import auto-maps the same headers
+    saveHeaderMappings(db, p.headers, p.mapping); // the next import auto-maps the same headers
     db.prepare(
       "UPDATE import_batches SET acc_count = ?, tx_count = ?, account_changes = ? WHERE id = ?",
     ).run(added, txAdded, JSON.stringify(changes), batch);

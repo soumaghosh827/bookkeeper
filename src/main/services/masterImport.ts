@@ -1,6 +1,6 @@
-import ExcelJS from "exceljs";
 import { randomUUID } from "crypto";
 import type { DB } from "../db";
+import type { Workbook } from "exceljs";
 import {
   ACCOUNT_KEYS,
   customKey,
@@ -10,6 +10,11 @@ import {
   type CustomColumn,
   type ImportFileInfo,
   type ImportProblem,
+  type MasterAccountItem,
+  type MasterAnalysis,
+  type MasterCommitOptions,
+  type MasterCommitResult,
+  type SheetChoice,
 } from "@shared/types";
 import { cleanIfsc, isValidIfsc } from "@shared/format";
 import {
@@ -24,36 +29,23 @@ import {
   sanitizeChoices,
   applyAccountUpdate,
 } from "./accountConflicts";
+import {
+  isDamagedText,
+  DAMAGED_MSG,
+  cleanAccountNo,
+  ACCOUNT_SYNONYMS,
+  autoMapHeaders,
+  findHeaderRow,
+  openWorkbook,
+  readWorksheet,
+  listSheets,
+  saveHeaderMappings,
+  accountFinder,
+  accountWriter,
+} from "./importCore";
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, ""); // "A/C No." -> "acno"
-
-// Extend this list whenever you meet a new header variation.
 const SYNONYMS: Record<AccountKey, string[]> = {
-  payee: [
-    "payee",
-    "payeename",
-    "name",
-    "beneficiary",
-    "beneficiaryname",
-    "nameofpayee",
-    "nameofbeneficiary",
-    "accountholder",
-    "accountholdername",
-  ],
-  account_no: [
-    "acno",
-    "accno",
-    "accountno",
-    "accountnumber",
-    "acnumber",
-    "bankaccountno",
-    "bankacno",
-    "beneficiaryaccountno",
-    "beneficiaryaccountnumber",
-  ],
-  bank: ["bank", "bankname", "nameofbank"],
-  branch: ["branch", "branchname", "bankbranch"],
-  ifsc: ["ifsc", "ifscode", "ifsccode", "ifscno", "ifscnumber"],
+  ...ACCOUNT_SYNONYMS,
   remarks: [
     "remarks",
     "remark",
@@ -64,8 +56,11 @@ const SYNONYMS: Record<AccountKey, string[]> = {
     "description",
   ],
 };
+
 const SYN = new Map<string, AccountKey>();
+
 for (const k of ACCOUNT_KEYS) for (const s of SYNONYMS[k]) SYN.set(s, k);
+
 const POSITIONAL: AccountKey[] = [
   "payee",
   "bank",
@@ -133,27 +128,10 @@ function autoMap(
       mapping: headers.map((_, i) => POSITIONAL[i] ?? null),
       customFields,
     };
-  const byLabel = new Map(customFields.map((c) => [norm(c.label), c.key]));
-  const saved = new Map(
-    (
-      db.prepare("SELECT header, field_key FROM import_mappings").all() as any[]
-    ).map((r) => [r.header as string, r.field_key as string]),
-  );
-  const used = new Set<string>();
-  const mapping = headers.map((h) => {
-    const n = norm(h);
-    const key = saved.get(n) ?? SYN.get(n) ?? byLabel.get(n) ?? null;
-    if (
-      key &&
-      !used.has(key) &&
-      ((ACCOUNT_KEYS as readonly string[]).includes(key) || isCustomKey(key))
-    ) {
-      used.add(key);
-      return key;
-    }
-    return null;
-  });
-  return { mapping, customFields };
+  return {
+    mapping: autoMapHeaders(db, headers, SYN, ACCOUNT_KEYS, "account"),
+    customFields,
+  };
 }
 
 function setSession(
@@ -195,92 +173,55 @@ function setSession(
   };
 }
 
-/** Excel keeps about 15 digits of a number: a 15+ digit value, or text like 1.2E+15, is already damaged. */
-function isDamagedNumber(v: unknown, text: string): boolean {
-  if (v && typeof v === "object" && !(v instanceof Date) && "result" in v)
-    v = (v as { result?: unknown }).result; // formula
-  if (typeof v === "number") return Math.abs(v) >= 1e15;
-  return /^\d(\.\d+)?e\+\d+$/i.test(text);
-}
+const findHeaderIndex = (db: DB, grid: string[][]) =>
+  findHeaderRow(db, grid, SYN, "account");
 
-/** Header row = the row (within the first 40) matching the most DIFFERENT known column names; titles and banners match nothing. */
-function findHeaderIndex(db: DB, grid: string[][]): number {
-  const known = new Map<string, string>(SYN);
-  for (const c of db
-    .prepare(
-      "SELECT key, label FROM custom_fields WHERE scope = 'account' AND archived = 0",
-    )
-    .all() as { key: string; label: string }[])
-    known.set(norm(c.label), c.key);
-  for (const r of db
-    .prepare("SELECT header, field_key FROM import_mappings")
-    .all() as { header: string; field_key: string }[])
-    known.set(r.header, r.field_key);
+// The opened workbook stays in memory while the person picks a sheet; released on commit or cancel.
+let book: { wb: Workbook; source: string; sheets: SheetChoice[] } | null = null;
 
-  let best = -1,
-    bestScore = 0;
-  for (let i = 0; i < Math.min(grid.length, 40); i++) {
-    const keys = new Set<string>(); // distinct fields, so a title merged across cells cannot score high
-    for (const c of grid[i]) {
-      const k = known.get(norm(c));
-      if (k) keys.add(k);
-    }
-    if (keys.size > bestScore) {
-      best = i;
-      bestScore = keys.size;
-    } // earliest row wins a tie
-  }
-  if (bestScore >= 2) return best;
-  // nothing recognisable: first row with at least 3 different filled cells
-  const i = grid.findIndex((r) => new Set(r.filter(Boolean)).size >= 3);
-  return i >= 0 ? i : 0;
+function loadSheet(db: DB, name: string): ImportFileInfo {
+  if (!book) throw new Error("Nothing loaded. Start the import again.");
+  const ws = book.wb.getWorksheet(name);
+  if (!ws) throw new Error("Sheet not found");
+  const sheet = readWorksheet(ws);
+  if (!sheet.length) throw new Error("This sheet is empty");
+  const hi = findHeaderIndex(
+    db,
+    sheet.map((r) => r.cells),
+  );
+  const rest = sheet.slice(hi);
+  const info = setSession(
+    db,
+    book.source,
+    rest.map((r) => r.cells),
+    true,
+    rest.map((r) => r.cells.map((_, c) => r.risky.includes(c))),
+    rest.map((r) => r.n),
+  );
+  return { ...info, sheet: name, sheets: book.sheets };
 }
 
 export async function loadFile(
   db: DB,
   filePath: string,
 ): Promise<ImportFileInfo> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(filePath);
-  const ws = wb.worksheets[0];
-  if (!ws) throw new Error("No sheet found in file");
-  const width = ws.columnCount;
-  const grid: string[][] = [];
-  const risk: boolean[][] = [];
-  const nums: number[] = []; // real Excel row numbers
-  ws.eachRow({ includeEmpty: false }, (row, n) => {
-    const cells: string[] = [];
-    const flags: boolean[] = [];
-    for (let c = 1; c <= width; c++) {
-      const cell = row.getCell(c);
-      const text = (cell.text ?? "").trim(); // .text keeps long account numbers as shown
-      cells.push(text);
-      flags.push(isDamagedNumber(cell.value, text));
-    }
-    if (!cells.some((x) => x !== "")) return; // styled but empty rows are ignored
-    grid.push(cells);
-    risk.push(flags);
-    nums.push(n);
-  });
-  if (!grid.length) throw new Error("The sheet is empty");
-  const hi = findHeaderIndex(db, grid);
-  return setSession(
-    db,
-    filePath.split(/[\\/]/).pop()!,
-    grid.slice(hi),
-    true,
-    risk.slice(hi),
-    nums.slice(hi),
-  );
+  const wb = await openWorkbook(filePath);
+  const sheets = listSheets(db, wb, SYN, "account");
+  book = { wb, source: filePath.split(/[\\/]/).pop()!, sheets };
+  return loadSheet(db, (sheets.find((s) => s.recommended) ?? sheets[0]).name);
 }
 
-export const loadPaste = (db: DB, text: string, hasHeader: boolean) =>
-  setSession(
+export const selectSheet = (db: DB, name: string) => loadSheet(db, name);
+
+export const loadPaste = (db: DB, text: string, hasHeader: boolean) => {
+  book = null;
+  return setSession(
     db,
     "Pasted cells",
     parseTsv(String(text).slice(0, 5_000_000)),
     hasHeader,
   );
+};
 
 function readRows(mapping: ColumnMapping) {
   if (!session) throw new Error("Nothing loaded. Start the import again.");
@@ -307,10 +248,7 @@ function readRows(mapping: ColumnMapping) {
       payee: (v.payee ?? "").trim(),
       bank: (v.bank ?? "").trim(),
       branch: (v.branch ?? "").trim(),
-      account_no: (v.account_no ?? "")
-        .replace(/\s/g, "")
-        .replace(/^'/, "")
-        .slice(0, 60),
+      account_no: cleanAccountNo(v.account_no),
       ifsc: cleanIfsc(v.ifsc ?? ""),
       remarks: (v.remarks ?? "").trim(),
     };
@@ -320,40 +258,12 @@ function readRows(mapping: ColumnMapping) {
 
     const issues: string[] = [];
     if (!a.payee) issues.push("Missing beneficiary");
+    if (!a.account_no) issues.push("Account number required");
     if (a.ifsc && !isValidIfsc(a.ifsc)) issues.push("Invalid IFSC");
-    if (
-      a.account_no &&
-      (risky.includes(accCol) || /^\d(\.\d+)?e\+\d+$/i.test(a.account_no))
-    )
-      issues.push(
-        "Account number damaged by Excel (long number). Format the column as Text, re-enter it and save again",
-      );
+    if (a.account_no && (risky.includes(accCol) || isDamagedText(a.account_no)))
+      issues.push(DAMAGED_MSG);
     return { n, v, a, extra, issues };
   });
-}
-
-// ---------- grouped analysis (one record per account number, like the transaction import) ----------
-export interface MasterAccountItem {
-  key: string; // account number, or "#<row>" for a row without one
-  account_no: string;
-  payee: string;
-  rows: number[];
-  rowCount: number;
-  isNew: boolean; // false = already in master
-  differs: boolean; // existing account whose details differ from the file
-  fields: FieldConflict[];
-  similar?: string; // new account that looks like one already stored / earlier in the file
-}
-export interface MasterAnalysis {
-  total: number;
-  fresh: number; // accounts to add
-  existing: number; // accounts already in master
-  unchanged: number; // existing accounts the file does not change
-  noAccountNo: number; // rows without an account number (each is its own account)
-  similar: number;
-  invalidCount: number;
-  invalid: ImportProblem[];
-  items: MasterAccountItem[]; // only accounts needing a look: conflicts, differences or a similar match
 }
 
 interface Group {
@@ -368,12 +278,7 @@ interface Group {
 
 function groupRows(db: DB, mapping: ColumnMapping) {
   const rows = readRows(mapping);
-  const getMaster = db.prepare(
-    "SELECT id, payee, bank, branch, ifsc, remarks, extra FROM accounts WHERE in_master = 1 AND account_no = ? LIMIT 1",
-  );
-  const getNoAcc = db.prepare(
-    "SELECT id, payee, bank, branch, ifsc, remarks, extra FROM accounts WHERE in_master = 1 AND account_no = '' AND lower(payee) = lower(?) AND lower(bank) = lower(?) AND lower(branch) = lower(?) AND ifsc = ? LIMIT 1",
-  );
+  const find = accountFinder(db);
   const groups = new Map<string, Group>();
   const invalid: typeof rows = [];
   for (const r of rows) {
@@ -381,9 +286,7 @@ function groupRows(db: DB, mapping: ColumnMapping) {
       invalid.push(r);
       continue;
     }
-    const key =
-      r.a.account_no ||
-      "~" + [r.a.payee, r.a.bank, r.a.branch, r.a.ifsc].join("|").toLowerCase();
+    const key = r.a.account_no;
     let g = groups.get(key);
     if (!g) {
       g = {
@@ -393,10 +296,7 @@ function groupRows(db: DB, mapping: ColumnMapping) {
         values: { payee: "", bank: "", branch: "", ifsc: "", remarks: "" },
         extra: {},
         seen: newSeen(),
-        existing: r.a.account_no
-          ? ((getMaster.get(r.a.account_no) as any) ?? null)
-          : ((getNoAcc.get(r.a.payee, r.a.bank, r.a.branch, r.a.ifsc) as any) ??
-            null),
+        existing: find(r.a.account_no),
       };
       groups.set(key, g);
     }
@@ -449,13 +349,14 @@ export function analyze(db: DB, mapping: ColumnMapping): MasterAnalysis {
   let fresh = 0,
     existing = 0,
     unchanged = 0,
-    noAccountNo = 0;
+    promote = 0;
 
   for (const g of groups) {
     const fields = buildFields(g.seen, g.values, g.existing ?? undefined);
     let differs = false;
     if (g.existing) {
       existing++;
+      if (g.existing.in_master === 0) promote++;
       differs = !!(
         COMPARE.some(
           ([f]) => g.values[f] && !same(g.values[f], g.existing[f]),
@@ -465,7 +366,6 @@ export function analyze(db: DB, mapping: ColumnMapping): MasterAnalysis {
       if (!differs) unchanged++;
     } else {
       fresh++;
-      if (!g.account_no) noAccountNo++;
     }
     const note = notes.get(g.key);
     if (fields.length || note)
@@ -487,7 +387,7 @@ export function analyze(db: DB, mapping: ColumnMapping): MasterAnalysis {
     fresh,
     existing,
     unchanged,
-    noAccountNo,
+    promote,
     similar: notes.size,
     invalidCount: invalid.length,
     invalid: invalid.slice(0, 200).map((r) => ({
@@ -498,21 +398,6 @@ export function analyze(db: DB, mapping: ColumnMapping): MasterAnalysis {
     })),
     items,
   };
-}
-
-// ---------- grouped commit: one record per account number ----------
-export interface MasterCommitOptions {
-  existingRule?: "keep" | "update"; // for accounts already in master; default keep
-  similarRule?: "add" | "skip"; // for new accounts that look like existing ones; default skip
-  decisions?: Record<string, "keep" | "update" | "add" | "skip">; // per account (key = account number, or "#<row>")
-  fieldChoices?: Record<string, Partial<Record<AccField, string>>>; // key -> field -> chosen value
-}
-export interface MasterCommitResult {
-  added: number;
-  updated: number;
-  unchanged: number;
-  skipped: number;
-  invalid: number;
 }
 
 export function commitPlan(
@@ -532,16 +417,7 @@ export function commitPlan(
   const keys = new Set(groups.map((g) => g.key));
   const choices = sanitizeChoices(opts.fieldChoices, keys);
 
-  const ins = db.prepare(
-    `INSERT INTO accounts (id, payee, bank, branch, account_no, ifsc, remarks, in_master, extra, created_at, updated_at)
-     VALUES (@id, @payee, @bank, @branch, @account_no, @ifsc, @remarks, 1, @extra, @now, @now)`,
-  );
-  const upd = db.prepare(
-    "UPDATE accounts SET payee=@payee, bank=@bank, branch=@branch, ifsc=@ifsc, remarks=@remarks, extra=@extra, updated_at=@now WHERE id=@id",
-  );
-  const saveMap = db.prepare(
-    "INSERT OR REPLACE INTO import_mappings(header, field_key) VALUES (?, ?)",
-  );
+  const writer = accountWriter(db);
   const addCustom = db.prepare(
     "INSERT OR IGNORE INTO custom_fields(key, label, scope, position) VALUES (?, ?, 'account', (SELECT COALESCE(MAX(position), 0) + 1 FROM custom_fields))",
   );
@@ -551,10 +427,9 @@ export function commitPlan(
     skipped = 0;
 
   db.transaction(() => {
+    saveHeaderMappings(db, headers, mapping);
     mapping.forEach((k, i) => {
-      if (!k) return;
-      saveMap.run(norm(headers[i]), k);
-      if (isCustomKey(k)) addCustom.run(k, headers[i].trim() || k);
+      if (k && isCustomKey(k)) addCustom.run(k, headers[i].trim() || k);
     });
     for (const g of groups) {
       const pick = choices.get(g.key);
@@ -563,7 +438,7 @@ export function commitPlan(
           skipped++;
           continue;
         }
-        ins.run({
+        writer.insert({
           id: randomUUID(),
           payee: g.values.payee,
           bank: g.values.bank,
@@ -571,8 +446,10 @@ export function commitPlan(
           account_no: g.account_no,
           ifsc: g.values.ifsc,
           remarks: g.values.remarks,
+          in_master: 1,
           extra: JSON.stringify(g.extra),
           now,
+          batch: null, // identifies the import batch
           ...pick,
         });
         added++;
@@ -584,20 +461,31 @@ export function commitPlan(
         ruleUpdate || pick
           ? applyAccountUpdate(cur, g, ruleUpdate, pick)
           : null;
-      if (!next) {
+      const promote = cur.in_master === 0; // a one-off account joins the list
+      if (!next && !promote) {
         unchanged++;
         continue;
       }
-      upd.run({ ...next, id: cur.id, now });
+      const base = next ?? {
+        payee: cur.payee,
+        bank: cur.bank,
+        branch: cur.branch,
+        ifsc: cur.ifsc,
+        remarks: cur.remarks,
+        extra: cur.extra,
+      };
+      writer.update({ ...base, in_master: 1, id: cur.id, now });
       updated++;
     }
   })();
   session = null;
+  book = null;
   return { added, updated, unchanged, skipped, invalid: invalid.length };
 }
 
 export const clearSession = () => {
   session = null;
+  book = null;
 };
 
 export { customKey };

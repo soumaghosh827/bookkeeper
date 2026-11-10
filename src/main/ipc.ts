@@ -75,7 +75,9 @@ export function registerIpc() {
         : { ok: false, error: "Invalid recovery key" },
   );
   H("vault:lock", () => {
-    txi.clearSession(); // never keep a loaded import in memory after locking
+    // never keep a loaded import in memory after locking
+    imp.clearSession();
+    txi.clearSession();
     return vault.lock();
   });
 
@@ -117,6 +119,9 @@ export function registerIpc() {
       return { ok: true, data: await imp.loadFile(db(), r.filePaths[0]) };
     }),
   );
+  H("imp:sheet", (_e, name: string) =>
+    run(() => ({ ok: true, data: imp.selectSheet(db(), name) })),
+  );
   H("imp:paste", (_e, text, hasHeader) =>
     run(() => ({ ok: true, data: imp.loadPaste(db(), text, !!hasHeader) })),
   );
@@ -137,6 +142,9 @@ export function registerIpc() {
       if (r.canceled || !r.filePaths[0]) return CANCELLED;
       return { ok: true, data: await txi.loadFile(db(), r.filePaths[0]) };
     }),
+  );
+  H("tximp:sheet", (_e, name: string) =>
+    run(() => ({ ok: true, data: txi.selectSheet(db(), name) })),
   );
   H("tximp:analyze", (_e, m) =>
     run(() => ({ ok: true, data: txi.analyze(db(), m) })),

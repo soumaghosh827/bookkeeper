@@ -13,6 +13,8 @@ import type {
 } from "@shared/types";
 import Modal from "@/components/Modal";
 import AccountConflictCard from "../components/AccountConflictCard";
+import MappingTable from "../components/MappingTable";
+import SheetPicker from "../components/SheetPicker";
 import { useAccountChoices } from "../lib/useAccountChoices";
 
 type Step = "pick" | "map" | "review" | "done";
@@ -121,6 +123,17 @@ export default function TxImportDialog({
       } else if (r.error !== "Cancelled")
         setErr(r.error ?? "Could not read the file");
     });
+
+  const changeSheet = (name: string) =>
+    guard(async () => {
+      const r = await window.api.txImport.selectSheet(name);
+      if (r.ok) {
+        setInfo(r.data!);
+        setMapping(r.data!.mapping);
+        setAn(null);
+      } else setErr(r.error ?? "Could not read this sheet");
+    });
+
   const check = () =>
     guard(async () => {
       const r = await window.api.txImport.analyze(mapping);
@@ -131,6 +144,7 @@ export default function TxImportDialog({
       setShowRejected(false);
       setStep("review");
     });
+
   const doImport = () =>
     guard(async () => {
       const r = await window.api.txImport.commit({
@@ -145,11 +159,8 @@ export default function TxImportDialog({
       } else setErr(r.error ?? "Import failed");
     });
 
-  // choosing a field for one column frees it from any other column
-  const setCol = (i: number, v: string) => {
-    setMapping((m) =>
-      m.map((x, j) => (j === i ? v || null : v && x === v ? null : x)),
-    );
+  const changeMapping = (m: ColumnMapping) => {
+    setMapping(m);
     setAn(null);
   };
 
@@ -359,8 +370,9 @@ export default function TxImportDialog({
         <div className="card">
           <h3>Choose the Excel file</h3>
           <p className="muted">
-            The first sheet is read. Title or blank rows above the column names
-            are skipped automatically.
+            The sheet with the most compatible column names is chosen for you,
+            and you can change it on the next screen. Title or blank rows above
+            the column names are skipped automatically.
           </p>
           <p className="muted">
             Needed columns: {REQUIRED.map((k) => labels[k]).join(", ")}. Each
@@ -384,41 +396,19 @@ export default function TxImportDialog({
                 : ""}
             </small>
           </h3>
-          <table className="maptable">
-            <thead>
-              <tr>
-                <th>Column in your file</th>
-                <th>Goes to</th>
-              </tr>
-            </thead>
-            <tbody>
-              {info.headers.map((h, i) => (
-                <tr key={i}>
-                  <td>
-                    <strong>{h}</strong>
-                  </td>
-                  <td>
-                    <select
-                      value={mapping[i] ?? ""}
-                      onChange={(e) => setCol(i, e.target.value)}
-                    >
-                      <option value="">Skip this column</option>
-                      {CORE.map((k) => (
-                        <option key={k} value={k}>
-                          {optionLabel(k)}
-                        </option>
-                      ))}
-                      {custom.map((c) => (
-                        <option key={c.key} value={c.key}>
-                          {c.label} (custom)
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <SheetPicker
+            sheets={info.sheets}
+            value={info.sheet}
+            disabled={busy}
+            onChange={changeSheet}
+          />
+          <MappingTable
+            headers={info.headers}
+            mapping={mapping}
+            onChange={changeMapping}
+            fields={CORE.map((k) => ({ key: k, label: optionLabel(k) }))}
+            custom={custom}
+          />
           {missing.length > 0 && (
             <p className="error" style={{ marginTop: 8 }}>
               Still to match: {missing.map((k) => labels[k]).join(", ")}

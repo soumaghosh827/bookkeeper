@@ -28,12 +28,14 @@ const api: BookkeeperApi = {
   },
   masterImport: {
     pickFile: () => inv("imp:pick"),
+    selectSheet: (n) => inv("imp:sheet", n),
     loadPaste: (t, h) => inv("imp:paste", t, h),
     analyze: (m) => inv("imp:analyze", m),
     commitPlan: (m, o) => inv("imp:commitplan", m, o),
   },
   txImport: {
     pickFile: () => inv("tximp:pick"),
+    selectSheet: (n) => inv("tximp:sheet", n),
     analyze: (m) => inv("tximp:analyze", m),
     commit: (o) => inv("tximp:commit", o),
     cancel: () => inv("tximp:cancel"),

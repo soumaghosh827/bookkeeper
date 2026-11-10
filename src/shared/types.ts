@@ -196,6 +196,8 @@ export interface GridPage<T> {
 export type ColumnMapping = (string | null)[]; // account key, custom key ('x_...') or null = skip
 export interface ImportFileInfo {
   source: string;
+  sheet?: string; // Excel files only (not pasted cells)
+  sheets?: SheetChoice[];
   headers: string[];
   rowCount: number;
   mapping: ColumnMapping;
@@ -209,7 +211,7 @@ export interface ImportProblem {
   existing?: string;
 }
 export interface MasterAccountItem {
-  key: string; // account number, or "#<row>" for a row without one
+  key: string; // account number
   account_no: string;
   payee: string;
   rows: number[];
@@ -224,7 +226,7 @@ export interface MasterAnalysis {
   fresh: number;
   existing: number;
   unchanged: number;
-  noAccountNo: number;
+  promote: number; // existing one-off accounts that will be added to the list
   similar: number;
   invalidCount: number;
   invalid: ImportProblem[];
@@ -243,10 +245,17 @@ export interface MasterCommitResult {
   skipped: number;
   invalid: number;
 }
-
 // ---- transactions import (one Excel file fills accounts and transactions) ----
+export interface SheetChoice {
+  name: string;
+  hidden: boolean;
+  score: number; // distinct known columns found in the sheet's best header row
+  recommended: boolean; // the sheet with the most compatible headers
+}
 export interface TxImportFileInfo {
   source: string;
+  sheet: string; // sheet currently loaded
+  sheets: SheetChoice[]; // every sheet: visible first, hidden last
   headers: string[];
   rowCount: number;
   headerRow: number; // Excel row the column names were found in
@@ -543,6 +552,7 @@ export interface BookkeeperApi {
   };
   masterImport: {
     pickFile(): Promise<Result<ImportFileInfo>>;
+    selectSheet(name: string): Promise<Result<ImportFileInfo>>;
     loadPaste(
       text: string,
       hasHeader: boolean,
@@ -555,6 +565,7 @@ export interface BookkeeperApi {
   };
   txImport: {
     pickFile(): Promise<Result<TxImportFileInfo>>;
+    selectSheet(name: string): Promise<Result<TxImportFileInfo>>;
     analyze(mapping: ColumnMapping): Promise<Result<TxImportAnalysis>>;
     commit(opts: TxImportOptions): Promise<Result<TxImportResult>>;
     cancel(): Promise<void>;

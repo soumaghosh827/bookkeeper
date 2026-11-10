@@ -181,6 +181,8 @@ function prepareNewAccount(a: NonNullable<TxCreate["account"]>) {
   // Same cleaning/validation as the master screen, via a throw-away validation of the fields we need.
   const payee = String(a.payee ?? "").trim();
   if (!payee) throw new FieldError("Beneficiary name is required", "payee");
+  if (!String(a.account_no ?? "").replace(/\s/g, ""))
+    throw new FieldError("Account number is required", "account_no");
   const ifsc = String(a.ifsc ?? "")
     .replace(/\s/g, "")
     .toUpperCase();

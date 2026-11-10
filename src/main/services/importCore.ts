@@ -1,0 +1,289 @@
+/** Building blocks shared by the accounts import and the transactions import. */
+import type { DB } from "../db";
+import ExcelJS from "exceljs";
+import type { SheetChoice } from "@shared/types";
+
+/** "A/C No." -> "acno" */
+export const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** Text such as 1.2E+15: Excel has already lost the digits. */
+export const isDamagedText = (text: string) => /^\d(\.\d+)?e\+\d+$/i.test(text);
+
+export const DAMAGED_MSG =
+  "Account number damaged by Excel (long number). Format the column as Text, re-enter it and save again";
+
+/** Account numbers are matched exactly: only whitespace and a leading apostrophe are removed. */
+export const cleanAccountNo = (s: string | undefined) =>
+  (s ?? "").replace(/\s/g, "").replace(/^'/, "").slice(0, 60);
+
+type CoreField = "payee" | "account_no" | "bank" | "branch" | "ifsc";
+
+/** Header variations for the five account fields. Extend this list whenever you meet a new one. */
+export const ACCOUNT_SYNONYMS: Record<CoreField, string[]> = {
+  payee: [
+    "payee",
+    "payeename",
+    "name",
+    "beneficiary",
+    "beneficiaryname",
+    "nameofpayee",
+    "nameofbeneficiary",
+    "accountholder",
+    "accountholdername",
+  ],
+  account_no: [
+    "acno",
+    "accno",
+    "accountno",
+    "accountnumber",
+    "acnumber",
+    "bankaccountno",
+    "bankacno",
+    "beneficiaryaccountno",
+    "beneficiaryaccountnumber",
+  ],
+  bank: ["bank", "bankname", "nameofbank"],
+  branch: ["branch", "branchname", "bankbranch"],
+  ifsc: ["ifsc", "ifscode", "ifsccode", "ifscno", "ifscnumber"],
+};
+
+// ---------- header matching ----------
+type NameRow = { key: string; label: string };
+
+/** Active custom columns, optionally of one scope ('account' or 'transaction'). */
+function activeCustom(db: DB, scope?: string): NameRow[] {
+  return (
+    scope
+      ? db
+          .prepare(
+            "SELECT key, label FROM custom_fields WHERE scope = ? AND archived = 0",
+          )
+          .all(scope)
+      : db
+          .prepare("SELECT key, label FROM custom_fields WHERE archived = 0")
+          .all()
+  ) as NameRow[];
+}
+
+/** Header -> field the user chose in an earlier import. */
+function savedMappings(db: DB): Map<string, string> {
+  return new Map(
+    (
+      db.prepare("SELECT header, field_key FROM import_mappings").all() as {
+        header: string;
+        field_key: string;
+      }[]
+    ).map((r) => [r.header, r.field_key]),
+  );
+}
+
+/** One field per header (or null): saved mapping, then built-in synonym, then custom column label. */
+export function autoMapHeaders(
+  db: DB,
+  headers: string[],
+  synonyms: Map<string, string>,
+  coreKeys: readonly string[],
+  customScope?: string,
+): (string | null)[] {
+  const custom = activeCustom(db, customScope);
+  const customKeys = new Set(custom.map((c) => c.key));
+  const byLabel = new Map(custom.map((c) => [norm(c.label), c.key]));
+  const saved = savedMappings(db);
+  const used = new Set<string>();
+  return headers.map((h) => {
+    const n = norm(h);
+    const key = saved.get(n) ?? synonyms.get(n) ?? byLabel.get(n);
+    if (
+      !key ||
+      used.has(key) ||
+      !(coreKeys.includes(key) || customKeys.has(key))
+    )
+      return null;
+    used.add(key);
+    return key;
+  });
+}
+
+/** Header row = the row (within the first 40) matching the most DIFFERENT known column names; titles and banners match nothing. */
+export function findHeader(
+  db: DB,
+  grid: string[][],
+  synonyms: Map<string, string>,
+  customScope?: string,
+): { index: number; score: number } {
+  const known = new Map<string, string>();
+  for (const c of activeCustom(db, customScope))
+    known.set(norm(c.label), c.key);
+  for (const [n, k] of synonyms) known.set(n, k);
+  for (const [h, k] of savedMappings(db)) known.set(h, k);
+
+  let best = -1,
+    bestScore = 0;
+  for (let i = 0; i < Math.min(grid.length, 40); i++) {
+    const keys = new Set<string>(); // distinct fields, so a title merged across cells cannot score high
+    for (const c of grid[i]) {
+      const k = known.get(norm(c));
+      if (k) keys.add(k);
+    }
+    if (keys.size > bestScore) {
+      best = i;
+      bestScore = keys.size;
+    } // earliest row wins a tie
+  }
+  if (bestScore >= 2) return { index: best, score: bestScore };
+  // nothing recognisable: first row with at least 3 different filled cells (skips a title merged across the sheet)
+  const i = grid.findIndex((r) => new Set(r.filter(Boolean)).size >= 3);
+  return { index: i >= 0 ? i : 0, score: bestScore };
+}
+
+export const findHeaderRow = (
+  db: DB,
+  grid: string[][],
+  synonyms: Map<string, string>,
+  customScope?: string,
+): number => findHeader(db, grid, synonyms, customScope).index;
+
+// ---------- sheet reading ----------
+/** Excel keeps about 15 digits of a number: a 15+ digit value, or text like 1.2E+15, is already damaged. */
+export function isDamagedValue(v: unknown, text: string): boolean {
+  if (v && typeof v === "object" && !(v instanceof Date) && "result" in v)
+    v = (v as { result?: unknown }).result; // formula
+  if (typeof v === "number") return Math.abs(v) >= 1e15;
+  return isDamagedText(text);
+}
+
+/** The cell's raw value as text (dates as YYYY-MM-DD); used for amount and date columns only. */
+function rawText(v: unknown, text: string): string {
+  if (v && typeof v === "object" && !(v instanceof Date) && "result" in v)
+    v = (v as { result?: unknown }).result; // formula
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === "number") return String(v);
+  return text;
+}
+
+/** Displayed text of a cell. ExcelJS's cell.text can throw on odd formula cells, so fall back to the stored result. */
+function cellText(cell: ExcelJS.Cell): string {
+  try {
+    return (cell.text ?? "").trim();
+  } catch {
+    let v: unknown = cell.value;
+    if (v && typeof v === "object" && !(v instanceof Date) && "result" in v)
+      v = (v as { result?: unknown }).result;
+    return v == null ? "" : String(v).trim();
+  }
+}
+
+export interface SheetRow {
+  n: number; // real Excel row number
+  cells: string[]; // as displayed in Excel (keeps leading zeros and long account numbers)
+  raws: string[]; // raw values as text: for amount and date columns
+  risky: number[]; // columns Excel has already damaged
+}
+
+/** Reads the first sheet. Rows that are empty (even if styled) are skipped. */
+export async function openWorkbook(
+  filePath: string,
+): Promise<ExcelJS.Workbook> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(filePath);
+  if (!wb.worksheets.length) throw new Error("No sheet found in file");
+  return wb;
+}
+
+/** Reads one sheet. Empty rows (even if styled) are skipped. limit > 0 stops after that many rows (used for scoring). */
+export function readWorksheet(ws: ExcelJS.Worksheet, limit = 0): SheetRow[] {
+  const width = ws.columnCount;
+  const rows: SheetRow[] = [];
+  ws.eachRow({ includeEmpty: false }, (row, n) => {
+    if (limit && rows.length >= limit) return;
+    const cells: string[] = [],
+      raws: string[] = [],
+      risky: number[] = [];
+    for (let c = 1; c <= width; c++) {
+      const cell = row.getCell(c);
+      const text = cellText(cell);
+      cells.push(text);
+      raws.push(rawText(cell.value, text));
+      if (isDamagedValue(cell.value, text)) risky.push(c - 1);
+    }
+    if (cells.some((x) => x !== "")) rows.push({ n, cells, raws, risky });
+  });
+  return rows;
+}
+
+/** Reads the first sheet (kept for the accounts import until it gets the sheet picker). */
+export async function readSheet(filePath: string): Promise<SheetRow[]> {
+  const wb = await openWorkbook(filePath);
+  const rows = readWorksheet(wb.worksheets[0]);
+  if (!rows.length) throw new Error("The sheet is empty");
+  return rows;
+}
+
+/** All sheets: visible ones in workbook order, then hidden ones. Exactly one is recommended (score >= 2). */
+export function listSheets(
+  db: DB,
+  wb: ExcelJS.Workbook,
+  synonyms: Map<string, string>,
+  customScope?: string,
+): SheetChoice[] {
+  const all = wb.worksheets.map((ws) => {
+    const grid = readWorksheet(ws, 40).map((r) => r.cells);
+    return {
+      name: ws.name,
+      hidden: ws.state !== "visible",
+      score: grid.length
+        ? findHeader(db, grid, synonyms, customScope).score
+        : 0,
+    };
+  });
+  const ordered = [
+    ...all.filter((s) => !s.hidden),
+    ...all.filter((s) => s.hidden),
+  ];
+  // Hidden sheets are recommended only when no visible sheet has recognisable headers (score >= 2).
+  const visible = ordered.filter((s) => !s.hidden);
+  const pool = visible.some((s) => s.score >= 2) ? visible : ordered;
+  const top = Math.max(0, ...pool.map((s) => s.score));
+  const best = top >= 2 ? pool.find((s) => s.score === top) : undefined;
+  return ordered.map((s) => ({ ...s, recommended: s === best }));
+}
+
+// ---------- accounts and saved mappings ----------
+/** Finds a stored account by exact account number. A master account wins over a one-off; the oldest wins among equals. */
+export function accountFinder(db: DB) {
+  const q = db.prepare(
+    "SELECT id, payee, bank, branch, account_no, ifsc, remarks, in_master, extra FROM accounts WHERE account_no = ? ORDER BY in_master DESC, created_at ASC LIMIT 1",
+  );
+  return (accountNo: string) => (q.get(accountNo) as any) ?? null;
+}
+
+/** Remembers which field each header was mapped to, so the next import maps itself. Call inside the import's DB transaction. */
+export function saveHeaderMappings(
+  db: DB,
+  headers: string[],
+  mapping: (string | null)[],
+): void {
+  const q = db.prepare(
+    "INSERT OR REPLACE INTO import_mappings(header, field_key) VALUES (?, ?)",
+  );
+  mapping.forEach((k, i) => {
+    if (k) q.run(norm(headers[i]), k);
+  });
+}
+
+/** The two account writes both imports use. Call inside the import's DB transaction. */
+export function accountWriter(db: DB) {
+  const ins = db.prepare(
+    `INSERT INTO accounts (id, payee, bank, branch, account_no, ifsc, remarks, in_master, extra, created_at, updated_at, batch_id)
+     VALUES (@id, @payee, @bank, @branch, @account_no, @ifsc, @remarks, @in_master, @extra, @now, @now, @batch)`,
+  );
+  const upd = db.prepare(
+    "UPDATE accounts SET payee=@payee, bank=@bank, branch=@branch, ifsc=@ifsc, remarks=@remarks, in_master=@in_master, extra=@extra, updated_at=@now WHERE id=@id",
+  );
+  return {
+    /** New account. Needs id, payee, bank, branch, account_no, ifsc, remarks, in_master (0|1), extra (JSON text), now, batch (number|null). */
+    insert: (a: Record<string, unknown>) => void ins.run(a),
+    /** Changes details and in_master. Needs id, payee, bank, branch, ifsc, remarks, in_master (0|1), extra (JSON text), now. */
+    update: (a: Record<string, unknown>) => void upd.run(a),
+  };
+}

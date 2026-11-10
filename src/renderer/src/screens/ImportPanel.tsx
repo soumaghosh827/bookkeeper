@@ -1,13 +1,14 @@
 import { useState } from "react";
 import {
   ACCOUNT_KEYS,
-  customKey,
   type ColumnMapping,
   type ImportFileInfo,
   type Labels,
   type MasterAnalysis,
 } from "@shared/types";
 import AccountConflictCard from "../components/AccountConflictCard";
+import MappingTable from "../components/MappingTable";
+import SheetPicker from "../components/SheetPicker";
 import { useAccountChoices } from "../lib/useAccountChoices";
 
 type Step = "source" | "map" | "done";
@@ -71,6 +72,12 @@ export default function ImportPanel({
       else if (r.error !== "Cancelled")
         setErr(r.error ?? "Could not read the file");
     });
+  const changeSheet = (name: string) =>
+    guard(async () => {
+      const r = await window.api.masterImport.selectSheet(name);
+      if (r.ok) loaded(r.data!);
+      else setErr(r.error ?? "Could not read this sheet");
+    });
   const usePaste = () =>
     guard(async () => {
       const r = await window.api.masterImport.loadPaste(text, hasHeader);
@@ -97,8 +104,8 @@ export default function ImportPanel({
         setStep("done");
       } else setErr(r.error ?? "Import failed");
     });
-  const setCol = (i: number, v: string) => {
-    setMapping((m) => m.map((x, j) => (j === i ? v || null : x)));
+  const changeMapping = (m: ColumnMapping) => {
+    setMapping(m);
     setAn(null);
   };
   const skipCount = an
@@ -106,10 +113,22 @@ export default function ImportPanel({
         .length
     : 0;
   const addCount = an ? an.fresh - skipCount : 0;
-  const canUpdate =
-    !!an &&
-    an.existing > an.unchanged &&
-    (rule === "update" || Object.values(dec).includes("update"));
+  const newCount = addCount + (an?.promote ?? 0); // promoted one-off accounts also join the list
+  // Existing accounts that will really be changed: replaced by the file's details
+  // (rule or per-account decision), or given a value picked in "Accounts needing a look".
+  const updateCount = an
+    ? an.items.filter(
+        (i) =>
+          !i.isNew &&
+          ((i.differs && (dec[i.key] ?? rule) === "update") || !!fc[i.key]),
+      ).length
+    : 0;
+  const importLabel =
+    newCount > 0 && updateCount > 0
+      ? `Import ${newCount} new · update ${updateCount}`
+      : updateCount > 0
+        ? `Update ${updateCount} ${updateCount === 1 ? "account" : "accounts"}`
+        : `Import ${newCount} new`;
 
   return (
     <div className={`import${an ? " is-review" : ""}`}>
@@ -126,7 +145,9 @@ export default function ImportPanel({
           <div className="card">
             <h3>From an Excel file</h3>
             <p className="muted">
-              The first sheet is read. The first row must be the header row.
+              The sheet with the most compatible column names is chosen for you,
+              and you can change it on the next screen. Title or blank rows
+              above the column names are skipped automatically.
             </p>
             <button className="primary" disabled={busy} onClick={pickFile}>
               Choose Excel file…
@@ -191,50 +212,21 @@ export default function ImportPanel({
                   · {info.source} · {info.rowCount.toLocaleString("en-IN")} rows
                 </small>
               </h3>
-              <table className="maptable">
-                <thead>
-                  <tr>
-                    <th>Column in your data</th>
-                    <th>Goes to</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {info.headers.map((h, i) => {
-                    const newKey = customKey(h);
-                    const exists = info.customFields.some(
-                      (c) => c.key === newKey,
-                    );
-                    return (
-                      <tr key={i}>
-                        <td>
-                          <strong>{h}</strong>
-                        </td>
-                        <td>
-                          <select
-                            value={mapping[i] ?? ""}
-                            onChange={(e) => setCol(i, e.target.value)}
-                          >
-                            <option value="">Skip this column</option>
-                            {ACCOUNT_KEYS.map((k) => (
-                              <option key={k} value={k}>
-                                {labels[k]}
-                              </option>
-                            ))}
-                            {info.customFields.map((c) => (
-                              <option key={c.key} value={c.key}>
-                                {c.label} (custom)
-                              </option>
-                            ))}
-                            {!exists && (
-                              <option value={newKey}>New column “{h}”</option>
-                            )}
-                          </select>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <SheetPicker
+                sheets={info.sheets}
+                value={info.sheet}
+                disabled={busy}
+                onChange={changeSheet}
+              />
+              <MappingTable
+                heading="Column in your data"
+                headers={info.headers}
+                mapping={mapping}
+                onChange={changeMapping}
+                fields={ACCOUNT_KEYS.map((k) => ({ key: k, label: labels[k] }))}
+                custom={info.customFields}
+                allowNew
+              />
               <p
                 style={{
                   marginTop: 12,
@@ -279,9 +271,10 @@ export default function ImportPanel({
                       no changes)
                     </span>
                   )}
-                  {an.noAccountNo > 0 && (
+                  {an.promote > 0 && (
                     <span className="chip">
-                      {an.noAccountNo} without account no
+                      {an.promote} saved earlier as one-off — will be added to{" "}
+                      {masterName}
                     </span>
                   )}
                   {an.similar > 0 && (
@@ -291,7 +284,7 @@ export default function ImportPanel({
                   )}
                   {an.invalidCount > 0 && (
                     <span className="chip bad">
-                      {an.invalidCount} invalid (skipped)
+                      {an.invalidCount} invalid or without account no (skipped)
                     </span>
                   )}
                 </div>
@@ -334,18 +327,10 @@ export default function ImportPanel({
                   )}
                   <button
                     className="primary"
-                    disabled={
-                      busy ||
-                      (addCount === 0 &&
-                        !canUpdate &&
-                        Object.keys(fc).length === 0)
-                    }
+                    disabled={busy || (newCount === 0 && updateCount === 0)}
                     onClick={doImport}
                   >
-                    Import {addCount} new
-                    {canUpdate
-                      ? ` and update up to ${an.existing - an.unchanged}`
-                      : ""}
+                    {importLabel}
                   </button>
                 </div>
               </div>

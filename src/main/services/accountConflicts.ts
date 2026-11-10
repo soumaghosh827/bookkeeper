@@ -1,4 +1,5 @@
 import { cleanIfsc, isValidIfsc } from "@shared/format";
+import type { AccField, FieldCandidate, FieldConflict } from "@shared/types";
 
 export const clean = (s: string | undefined, max = 200) =>
   (s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -12,20 +13,8 @@ export const COMPARE = [
   ["ifsc", "IFSC"],
 ] as const;
 
-export type AccField = "payee" | "bank" | "branch" | "ifsc";
-export interface FieldCandidate {
-  value: string;
-  source: "file" | "master";
-  rows: number[]; // Excel rows with this value (empty for master)
-  count: number;
-}
-export interface FieldConflict {
-  field: AccField;
-  label: string;
-  candidates: FieldCandidate[];
-  defaultValue: string; // what happens today if the user does nothing
-  current: string; // value stored in the database today ("" for a new account or an empty field)
-}
+// defined once in shared/types.ts; re-exported so the importers keep importing them from here
+export type { AccField, FieldCandidate, FieldConflict };
 
 /** field -> value (first spelling seen) -> Excel rows carrying it */
 export type SeenMap = Record<AccField, Map<string, number[]>>;

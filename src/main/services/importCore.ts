@@ -153,6 +153,26 @@ export const findHeaderRow = (
   customScope?: string,
 ): number => findHeader(db, grid, synonyms, customScope).index;
 
+/** A row of real data, not column titles: it holds a valid IFSC or a long number (account numbers have 8+ digits). */
+export function rowLooksLikeData(cells: string[]): boolean {
+  return cells.some((c) => {
+    const t = c.replace(/\s/g, "");
+    return /^\d{8,}$/.test(t) || (!!t && isValidIfsc(cleanIfsc(t)));
+  });
+}
+
+/** Header detection with a "no header" answer: known column names win; otherwise a first row that looks like data means there is no header. */
+export function detectHeader(
+  db: DB,
+  grid: string[][],
+  synonyms: Map<string, string>,
+  customScope?: string,
+): { index: number; score: number; hasHeader: boolean } {
+  const h = findHeader(db, grid, synonyms, customScope);
+  if (h.score >= 2) return { ...h, hasHeader: true };
+  return { ...h, hasHeader: !rowLooksLikeData(grid[h.index] ?? []) };
+}
+
 // ---------- sheet reading ----------
 /** Excel keeps about 15 digits of a number: a 15+ digit value, or text like 1.2E+15, is already damaged. */
 export function isDamagedValue(v: unknown, text: string): boolean {

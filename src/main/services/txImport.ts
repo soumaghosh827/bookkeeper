@@ -36,7 +36,7 @@ import {
   DAMAGED_MSG,
   ACCOUNT_SYNONYMS,
   autoMapHeaders,
-  findHeaderRow,
+  detectHeader,
   saveHeaderMappings,
   accountWriter,
   openWorkbook,
@@ -90,6 +90,7 @@ export interface PlannedTx {
 }
 export interface TxImportPlan {
   source: string;
+  hasHeader: boolean;
   headers: string[];
   mapping: (string | null)[];
   accounts: Map<string, PlannedAccount>;
@@ -207,6 +208,7 @@ let session: {
   wb: Workbook;
   sheets: SheetChoice[];
   sheet: string;
+  hasHeader: boolean;
 } | null = null;
 let plan: TxImportPlan | null = null;
 export const getPlan = () => plan;
@@ -217,14 +219,6 @@ export const clearSession = () => {
 
 function autoMap(db: DB, headers: string[]): (string | null)[] {
   return autoMapHeaders(db, headers, SYN, KEYS);
-}
-
-function findHeaderIndex(db: DB, grid: Row[]): number {
-  return findHeaderRow(
-    db,
-    grid.map((r) => r.cells),
-    SYN,
-  );
 }
 
 /** Loads one sheet of the open workbook into the session and returns what the mapping screen needs. */
@@ -238,14 +232,29 @@ function loadSheet(
   const ws = wb.getWorksheet(name);
   if (!ws) throw new Error("Sheet not found");
   const grid = readWorksheet(ws);
-  if (grid.length < 2)
-    throw new Error("This sheet needs a header row and at least one data row");
-  const hi = findHeaderIndex(db, grid);
-  const headers = grid[hi].cells.map((h, i) => h || `Column ${i + 1}`);
-  const rows = grid.slice(hi + 1).filter((r) => r.cells.some((x) => x !== ""));
+  if (!grid.length) throw new Error("This sheet is empty");
+  const d = detectHeader(
+    db,
+    grid.map((r) => r.cells),
+    SYN,
+  );
+  const headers = grid[d.index].cells.map((h, i) =>
+    d.hasHeader ? h || `Column ${i + 1}` : `Column ${i + 1}`,
+  );
+  const rows = grid
+    .slice(d.hasHeader ? d.index + 1 : d.index)
+    .filter((r) => r.cells.some((x) => x !== ""));
   if (!rows.length)
     throw new Error("No data rows found below the header row of this sheet");
-  session = { source, headers, rows, wb, sheets, sheet: name };
+  session = {
+    source,
+    headers,
+    rows,
+    wb,
+    sheets,
+    sheet: name,
+    hasHeader: d.hasHeader,
+  };
   plan = null;
   return {
     source,
@@ -253,8 +262,8 @@ function loadSheet(
     sheets,
     headers,
     rowCount: rows.length,
-    headerRow: grid[hi].n,
-    mapping: autoMap(db, headers),
+    headerRow: d.hasHeader ? grid[d.index].n : 0, // 0 = this sheet has no header row
+    mapping: d.hasHeader ? autoMap(db, headers) : headers.map(() => null),
   };
 }
 
@@ -580,6 +589,7 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
 
   plan = {
     source: s.source,
+    hasHeader: s.hasHeader,
     headers: s.headers,
     mapping,
     accounts: groups,
@@ -758,7 +768,7 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
     }
 
     for (const id of touched) refreshAccountStats(db, id);
-    saveHeaderMappings(db, p.headers, p.mapping); // the next import auto-maps the same headers
+    if (p.hasHeader) saveHeaderMappings(db, p.headers, p.mapping); // the next import auto-maps the same headers
     db.prepare(
       "UPDATE import_batches SET acc_count = ?, tx_count = ?, account_changes = ? WHERE id = ?",
     ).run(added, txAdded, JSON.stringify(changes), batch);

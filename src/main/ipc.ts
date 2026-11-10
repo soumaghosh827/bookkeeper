@@ -122,8 +122,15 @@ export function registerIpc() {
   H("imp:sheet", (_e, name: string) =>
     run(() => ({ ok: true, data: imp.selectSheet(db(), name) })),
   );
-  H("imp:paste", (_e, text, hasHeader) =>
-    run(() => ({ ok: true, data: imp.loadPaste(db(), text, !!hasHeader) })),
+  H("imp:paste", (_e, text, mode) =>
+    run(() => ({
+      ok: true,
+      data: imp.loadPaste(
+        db(),
+        text,
+        mode === "auto" || mode === "yes" || mode === "no" ? mode : !!mode,
+      ),
+    })),
   );
   H("imp:analyze", (_e, m) =>
     run(() => ({ ok: true, data: imp.analyze(db(), m) })),

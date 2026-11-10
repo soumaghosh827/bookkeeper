@@ -29,7 +29,7 @@ import {
   DAMAGED_MSG,
   ACCOUNT_SYNONYMS,
   autoMapHeaders,
-  findHeaderRow,
+  detectHeader,
   openWorkbook,
   readWorksheet,
   listSheets,
@@ -135,6 +135,8 @@ function autoMap(
   };
 }
 
+export type HeaderMode = "auto" | "yes" | "no";
+
 function setSession(
   db: DB,
   source: string,
@@ -174,9 +176,6 @@ function setSession(
   };
 }
 
-const findHeaderIndex = (db: DB, grid: string[][]) =>
-  findHeaderRow(db, grid, SYN, "account");
-
 // The opened workbook stays in memory while the person picks a sheet; released on commit or cancel.
 let book: { wb: Workbook; source: string; sheets: SheetChoice[] } | null = null;
 
@@ -186,16 +185,18 @@ function loadSheet(db: DB, name: string): ImportFileInfo {
   if (!ws) throw new Error("Sheet not found");
   const sheet = readWorksheet(ws);
   if (!sheet.length) throw new Error("This sheet is empty");
-  const hi = findHeaderIndex(
+  const d = detectHeader(
     db,
     sheet.map((r) => r.cells),
+    SYN,
+    "account",
   );
-  const rest = sheet.slice(hi);
+  const rest = sheet.slice(d.index);
   const info = setSession(
     db,
     book.source,
     rest.map((r) => r.cells),
-    true,
+    d.hasHeader,
     rest.map((r) => r.cells.map((_, c) => r.risky.includes(c))),
     rest.map((r) => r.n),
   );
@@ -214,13 +215,24 @@ export async function loadFile(
 
 export const selectSheet = (db: DB, name: string) => loadSheet(db, name);
 
-export const loadPaste = (db: DB, text: string, hasHeader: boolean) => {
+export const loadPaste = (db: DB, text: string, mode: HeaderMode | boolean) => {
   book = null;
+  const m: HeaderMode = mode === true ? "yes" : mode === false ? "no" : mode;
+  const grid = parseTsv(String(text).slice(0, 5_000_000));
+  let start = 0,
+    hasHeader = m === "yes";
+  if (m === "auto") {
+    const d = detectHeader(db, grid, SYN, "account");
+    start = d.index;
+    hasHeader = d.hasHeader;
+  }
   return setSession(
     db,
     "Pasted cells",
-    parseTsv(String(text).slice(0, 5_000_000)),
+    grid.slice(start),
     hasHeader,
+    [],
+    grid.slice(start).map((_, i) => start + i + 1),
   );
 };
 

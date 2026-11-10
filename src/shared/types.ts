@@ -194,6 +194,9 @@ export interface GridPage<T> {
 
 // ---- master import (Excel file or pasted cells) ----
 export type ColumnMapping = (string | null)[]; // account key, custom key ('x_...') or null = skip
+
+/** How pasted cells are read: "auto" finds the header row itself, "yes" = first row is the header, "no" = no header row. */
+export type HeaderMode = "auto" | "yes" | "no";
 export interface ImportFileInfo {
   source: string;
   sheet?: string; // Excel files only (not pasted cells)
@@ -555,7 +558,7 @@ export interface BookkeeperApi {
     selectSheet(name: string): Promise<Result<ImportFileInfo>>;
     loadPaste(
       text: string,
-      hasHeader: boolean,
+      mode: HeaderMode | boolean,
     ): Promise<Result<ImportFileInfo>>;
     analyze(mapping: ColumnMapping): Promise<Result<MasterAnalysis>>;
     commitPlan(

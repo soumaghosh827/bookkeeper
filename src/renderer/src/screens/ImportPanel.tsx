@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   ACCOUNT_KEYS,
+  type HeaderMode,
   type ColumnMapping,
   type ImportFileInfo,
   type Labels,
@@ -25,7 +26,7 @@ export default function ImportPanel({
 }) {
   const [step, setStep] = useState<Step>("source");
   const [text, setText] = useState("");
-  const [hasHeader, setHasHeader] = useState(true);
+  const [headerMode, setHeaderMode] = useState<HeaderMode>("auto");
   const [info, setInfo] = useState<ImportFileInfo | null>(null);
   const [mapping, setMapping] = useState<ColumnMapping>([]);
   const [an, setAn] = useState<MasterAnalysis | null>(null);
@@ -80,7 +81,7 @@ export default function ImportPanel({
     });
   const usePaste = () =>
     guard(async () => {
-      const r = await window.api.masterImport.loadPaste(text, hasHeader);
+      const r = await window.api.masterImport.loadPaste(text, headerMode);
       r.ok ? loaded(r.data!) : setErr(r.error ?? "Nothing to import");
     });
   const check = () =>
@@ -174,12 +175,15 @@ export default function ImportPanel({
               }}
             >
               <label className="check">
-                <input
-                  type="checkbox"
-                  checked={hasHeader}
-                  onChange={(e) => setHasHeader(e.target.checked)}
-                />{" "}
-                First row has column names
+                First row:{" "}
+                <select
+                  value={headerMode}
+                  onChange={(e) => setHeaderMode(e.target.value as HeaderMode)}
+                >
+                  <option value="auto">Detect automatically</option>
+                  <option value="yes">Has column names</option>
+                  <option value="no">Is data (no names)</option>
+                </select>
               </label>
               <button
                 className="primary"
@@ -189,7 +193,7 @@ export default function ImportPanel({
                 Continue
               </button>
             </p>
-            {!hasHeader && (
+            {headerMode === "no" && (
               <p className="muted">
                 Without names, columns are read in this order:{" "}
                 {["payee", "bank", "branch", "account_no", "ifsc", "remarks"]

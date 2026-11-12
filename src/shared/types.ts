@@ -274,23 +274,27 @@ export interface TxImportRejected {
 
 // ---------- import matching (decisions about rows that look like an already saved transaction) ----------
 /** ref_link: the file row has a reference, the saved transaction has none.
- *  ref_differs: both have references and none is shared.
- *  blank_match: the file row has no reference. */
-export type TxMatchKind = "ref_link" | "ref_differs" | "blank_match";
+ *  blank_match: the file row has no reference.
+ *  file_twin: same key, and same reference (or both blank), as an earlier row of the same file. */
+export type TxMatchKind = "ref_link" | "blank_match" | "file_twin";
 /** link = add the file's reference to the saved transaction (no new transaction); new = import as a separate transaction; skip = ignore the row. */
 export type TxMatchChoice = "link" | "new" | "skip";
 
 export const MATCH_RECOMMENDED: Record<TxMatchKind, TxMatchChoice> = {
   ref_link: "link",
-  ref_differs: "new",
   blank_match: "skip",
+  file_twin: "new",
 };
 /** Choices offered per kind, the recommended one first. A blank row has no reference to add, so it cannot "link". */
 export const MATCH_CHOICES: Record<TxMatchKind, TxMatchChoice[]> = {
   ref_link: ["link", "new", "skip"],
-  ref_differs: ["new", "link", "skip"],
   blank_match: ["skip", "new"],
+  file_twin: ["new", "skip"],
 };
+/** What a file row was paired with: a saved transaction, or an earlier row of the same file. */
+export type TxMatchTarget =
+  | { type: "saved"; uid: string; refs: string[]; created_at: string }
+  | { type: "file"; row: number; ref: string }; // Excel row of the earlier file row, and its reference ("" = none)
 export interface TxMatchRow {
   row: number; // Excel row of the file transaction
   kind: TxMatchKind;
@@ -299,7 +303,7 @@ export interface TxMatchRow {
   amount_paise: number;
   entry_date: string; // ISO
   fileRef: string; // "" = the file row has no reference
-  saved: { uid: string; refs: string[]; created_at: string }; // the saved transaction this row was paired with
+  target: TxMatchTarget; // what the row was paired with: a saved transaction or an earlier row of this file
 }
 
 export type TxImportExceptionKind =
@@ -337,12 +341,13 @@ export interface TxImportAnalysis {
   total: number;
   dateMode: "column" | "today"; // 'today' = no date column mapped
   accounts: { new: number; existing: number; oneOffExisting: number };
-  transactions: { fresh: number; exists: number; twinGroups: number };
+  transactions: { fresh: number; exists: number };
   rejectedCount: number;
   rejected: TxImportRejected[]; // first 200
   exceptions: TxImportException[];
   matches: TxMatchRow[]; // file rows that look like a saved transaction and need a decision (recommended action is the default)
   linkedSame: number; // file rows that are the same saved transaction (shared reference): nothing new is added
+  infoTwins: number; // rows with the same key but a different reference than another transaction (saved or in-file): kept, no decision
 }
 export interface TxImportOptions {
   newAccounts: "master" | "oneoff";

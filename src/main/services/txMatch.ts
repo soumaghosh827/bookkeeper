@@ -1,5 +1,4 @@
 import type { DB } from "../db";
-import type { TxMatchKind } from "@shared/types";
 import { refKey } from "./txReferences";
 
 /** A saved (not deleted) transaction as the matcher sees it. */
@@ -16,7 +15,8 @@ export interface FileTx {
 export type MatchOutcome =
   | { type: "new" } // no saved transaction left to compare with: import as new
   | { type: "same"; saved: SavedTx } // shares a reference with a saved transaction: the same transaction, nothing to add
-  | { type: "ask"; kind: TxMatchKind; saved: SavedTx }; // looks like a saved transaction: the user decides
+  | { type: "ask"; kind: "ref_link" | "blank_match"; saved: SavedTx } // looks like a saved transaction: the user decides
+  | { type: "differs"; saved: SavedTx }; // both have references, none shared: a genuine twin, info only
 
 /** Identity key without the reference: account number + amount + date. */
 export const matchKey = (no: string, paise: number, date: string) =>
@@ -78,7 +78,7 @@ export function loadSavedTx(
  *  2. no reference vs saved with none       -> ask blank_match
  *  3. reference vs saved with none          -> ask ref_link
  *  4. no reference vs saved with references -> ask blank_match
- *  5. reference vs saved, none shared       -> ask ref_differs
+ *  5. reference vs saved, none shared       -> differs (info only, no decision)
  * Rows left over are new. Result is aligned with `rows`.
  */
 export function matchRows(
@@ -118,7 +118,7 @@ export function matchRows(
     const pass = (
       rowBlank: boolean,
       savedBlank: boolean,
-      kind: TxMatchKind,
+      kind: "ref_link" | "blank_match" | "differs",
     ) => {
       for (const i of idx) {
         if (out[i].type !== "new") continue;
@@ -128,13 +128,52 @@ export function matchRows(
         );
         if (!c) continue;
         used.add(c);
-        out[i] = { type: "ask", kind, saved: c };
+        out[i] =
+          kind === "differs"
+            ? { type: "differs", saved: c }
+            : { type: "ask", kind, saved: c };
       }
     };
     pass(true, true, "blank_match");
     pass(false, true, "ref_link");
     pass(true, false, "blank_match");
-    pass(false, false, "ref_differs");
+    pass(false, false, "differs");
   }
   return out;
+}
+
+/**
+ * Phase 2: the file against itself. Only rows that phase 1 left as "new" take part.
+ * A row is paired with the FIRST earlier row of the same key that has the same reference
+ * (blank counts as a reference of its own), so 3 identical rows give 2 -> 1 and 3 -> 1, never 3 -> 2.
+ * Rows with the same key but a different reference are not paired, only counted in `info`.
+ * `target[i]` = index (in `rows`) of the earlier row, or null. Aligned with `rows`.
+ */
+export function matchInFile(
+  rows: FileTx[],
+  phase1: MatchOutcome[],
+): { target: (number | null)[]; info: number } {
+  const target: (number | null)[] = rows.map(() => null);
+  const groups = new Map<string, number[]>();
+  rows.forEach((r, i) => {
+    if (phase1[i].type !== "new") return;
+    const g = groups.get(r.key);
+    if (g) g.push(i);
+    else groups.set(r.key, [i]);
+  });
+
+  let info = 0;
+  for (const idx of groups.values()) {
+    if (idx.length < 2) continue;
+    const firstByRef = new Map<string, number>();
+    idx.forEach((i, n) => {
+      const rk = refKey(rows[i].ref);
+      const first = firstByRef.get(rk);
+      if (first === undefined) {
+        firstByRef.set(rk, i);
+        if (n > 0) info++; // same key as an earlier row but a different reference
+      } else target[i] = first;
+    });
+  }
+  return { target, info };
 }

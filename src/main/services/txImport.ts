@@ -9,7 +9,13 @@ import {
   getReferences,
   refsText,
 } from "./txReferences";
-import { loadSavedTx, matchKey, matchRows, type SavedTx } from "./txMatch";
+import {
+  loadSavedTx,
+  matchKey,
+  matchRows,
+  matchInFile,
+  type SavedTx,
+} from "./txMatch";
 import type { DB } from "../db";
 import type { Workbook } from "exceljs";
 import { formatPaise, parseDate, todayIso } from "@shared/format";
@@ -99,7 +105,7 @@ export interface PlannedTx {
   notes: string;
   extra: Record<string, string>;
   status: "fresh" | "exists" | "ask"; // exists = same saved transaction; ask = looks like one, the user decides
-  match?: { kind: TxMatchKind; savedUid: string };
+  match?: { kind: TxMatchKind; savedUid: string; targetRow?: number }; // targetRow: Excel row of the earlier file row (file_twin only)
   flags: string[]; // ids of exceptions that need a decision first
 }
 export interface TxImportPlan {
@@ -114,8 +120,6 @@ export interface TxImportPlan {
 }
 
 // ---------- helpers ----------
-const txKey = (no: string, paise: number, date: string, ref: string) =>
-  [no, paise, date, ref.toLowerCase().replace(/\s+/g, "")].join("\u0001");
 
 // In a transactions file a "Remarks" column belongs to each row, so it maps to Notes (changeable in the mapping screen).
 const SYNONYMS: Record<string, string[]> = {
@@ -525,21 +529,24 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
     }
   }
 
-  const outcomes = matchRows(
-    rows.map((p) => ({ key: matchKey(p.no, p.paise, p.date), ref: p.ref })),
-    saved,
-  );
+  const fileTx = rows.map((p) => ({
+    key: matchKey(p.no, p.paise, p.date),
+    ref: p.ref,
+  }));
+  const outcomes = matchRows(fileTx, saved); // phase 1: against saved transactions
+  const inFile = matchInFile(fileTx, outcomes); // phase 2: the file against itself
   const matches: TxMatchRow[] = [];
-  const seen = new Map<string, number>();
   const txs: PlannedTx[] = [];
   let fresh = 0,
-    exists = 0;
+    exists = 0,
+    infoDiffers = 0;
   for (const [idx, p] of rows.entries()) {
-    const key = txKey(p.no, p.paise, p.date, p.ref);
-    seen.set(key, (seen.get(key) ?? 0) + 1);
     const m = outcomes[idx];
+    const tIdx = inFile.target[idx];
+    const tRow = m.type === "new" && tIdx !== null ? rows[tIdx] : null; // earlier row of this file
+    const differs = m.type === "differs"; // genuine twin of a saved transaction: info only
     const status: PlannedTx["status"] =
-      m.type === "same" ? "exists" : m.type === "ask" ? "ask" : "fresh";
+      m.type === "same" ? "exists" : m.type === "ask" || tRow ? "ask" : "fresh";
     const flags: string[] = [];
     if (status !== "exists") {
       const payee =
@@ -565,21 +572,34 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
           detail: `High value: ₹${formatPaise(p.paise)}`,
         });
       }
-      if (m.type === "new") fresh++;
+      if (status === "fresh") {
+        fresh++;
+        if (differs) infoDiffers++;
+      }
+      const base = {
+        row: p.n,
+        account_no: p.no,
+        payee,
+        amount_paise: p.paise,
+        entry_date: p.date,
+        fileRef: p.ref,
+      };
       if (m.type === "ask")
         matches.push({
-          row: p.n,
+          ...base,
           kind: m.kind,
-          account_no: p.no,
-          payee,
-          amount_paise: p.paise,
-          entry_date: p.date,
-          fileRef: p.ref,
-          saved: {
+          target: {
+            type: "saved",
             uid: m.saved.uid,
             refs: m.saved.refs,
             created_at: m.saved.created_at,
           },
+        });
+      else if (tRow)
+        matches.push({
+          ...base,
+          kind: "file_twin",
+          target: { type: "file", row: tRow.n, ref: tRow.ref },
         });
     } else exists++;
     txs.push({
@@ -593,11 +613,14 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
       extra: p.extra,
       status,
       match:
-        m.type === "ask" ? { kind: m.kind, savedUid: m.saved.uid } : undefined,
+        m.type === "ask"
+          ? { kind: m.kind, savedUid: m.saved.uid }
+          : tRow
+            ? { kind: "file_twin", savedUid: "", targetRow: tRow.n }
+            : undefined,
       flags,
     });
   }
-  const twinGroups = [...seen.values()].filter((c) => c >= 2).length;
 
   let nNew = 0,
     nExisting = 0,
@@ -625,9 +648,10 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
     total: s.rows.length,
     dateMode,
     accounts: { new: nNew, existing: nExisting, oneOffExisting: nOneOff },
-    transactions: { fresh, exists, twinGroups },
+    transactions: { fresh, exists },
     matches,
     linkedSame: exists,
+    infoTwins: inFile.info + infoDiffers,
     rejectedCount: rejected.length,
     rejected: rejected.slice(0, 200),
     exceptions,
@@ -701,6 +725,8 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
       linked = 0,
       skipMatch = 0;
 
+    const imported = new Set<number>(); // Excel rows that were inserted as new transactions
+
     for (const t of p.txs) {
       if (t.status === "ask" && t.match) {
         const kind = t.match.kind;
@@ -710,7 +736,10 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
           MATCH_RECOMMENDED[kind];
         if (!MATCH_CHOICES[kind].includes(choice))
           choice = MATCH_RECOMMENDED[kind];
-        if (choice === "skip") {
+        // a repeated file row is only dropped if the earlier row it repeats really gets imported
+        const orphan =
+          t.match.targetRow !== undefined && !imported.has(t.match.targetRow);
+        if (choice === "skip" && !orphan) {
           skipMatch++;
           continue;
         }
@@ -817,6 +846,7 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
       addReference(db, uid, t.reference_no, { batchId: batch, now });
       touched.add(id);
       txAdded++;
+      imported.add(t.row);
     }
 
     for (const id of touched) refreshAccountStats(db, id);

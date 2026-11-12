@@ -246,7 +246,10 @@ export default function TxImportDialog({
   const choices = [...choiceByRow.values()];
   const newFromMatches = choices.filter((c) => c === "new").length;
   const linkCount = choices.filter((c) => c === "link").length;
-  const needsReview = linkCount + newFromMatches > 0; // something will be written from the decision rows
+  const reviewNew = matches.filter(
+    (m) => m.kind !== "file_twin" && choiceByRow.get(m.row) === "new",
+  ).length; // a saved-looking row imported anyway; repeated file rows kept separate are today's behaviour
+  const needsReview = linkCount + reviewNew > 0;
 
   // zero / high-value checks only matter for rows that will really be imported as new
   const blocked = exc.filter(
@@ -491,17 +494,17 @@ export default function TxImportDialog({
               )}
               {matches.length > 0 && (
                 <span className="chip warn">
-                  {num(matches.length)} look already saved · check below
+                  {num(matches.length)} possible duplicates · check below
                 </span>
               )}
               <span className="chip">{num(an.accounts.new)} new accounts</span>
               <span className="chip">
                 {num(an.accounts.existing)} accounts already saved
               </span>
-              {an.transactions.twinGroups > 0 && (
+              {an.infoTwins > 0 && (
                 <span className="chip">
-                  {num(an.transactions.twinGroups)} sets of identical rows (all
-                  kept)
+                  {num(an.infoTwins)} rows share account, amount and date with
+                  another transaction but have a different reference (kept)
                 </span>
               )}
               {an.rejectedCount > 0 && (
@@ -637,7 +640,7 @@ export default function TxImportDialog({
                   onChange={(e) => setReviewed(e.target.checked)}
                 />{" "}
                 I have checked what happens to these{" "}
-                {num(linkCount + newFromMatches)} rows
+                {num(linkCount + reviewNew)} rows
               </label>
             )}
 

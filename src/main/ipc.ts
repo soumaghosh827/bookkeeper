@@ -128,7 +128,7 @@ export function registerIpc() {
       data: imp.loadPaste(
         db(),
         text,
-        mode === "auto" || mode === "yes" || mode === "no" ? mode : !!mode,
+        mode === "yes" || mode === "no" ? mode : "auto",
       ),
     })),
   );

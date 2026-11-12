@@ -8,6 +8,7 @@ import {
   type AccountKey,
   type ColumnMapping,
   type CustomColumn,
+  type HeaderMode,
   type ImportFileInfo,
   type ImportProblem,
   type MasterAccountItem,
@@ -135,8 +136,6 @@ function autoMap(
   };
 }
 
-export type HeaderMode = "auto" | "yes" | "no";
-
 function setSession(
   db: DB,
   source: string,
@@ -215,13 +214,12 @@ export async function loadFile(
 
 export const selectSheet = (db: DB, name: string) => loadSheet(db, name);
 
-export const loadPaste = (db: DB, text: string, mode: HeaderMode | boolean) => {
+export const loadPaste = (db: DB, text: string, mode: HeaderMode) => {
   book = null;
-  const m: HeaderMode = mode === true ? "yes" : mode === false ? "no" : mode;
   const grid = parseTsv(String(text).slice(0, 5_000_000));
   let start = 0,
-    hasHeader = m === "yes";
-  if (m === "auto") {
+    hasHeader = mode === "yes";
+  if (mode === "auto") {
     const d = detectHeader(db, grid, SYN, "account");
     start = d.index;
     hasHeader = d.hasHeader;

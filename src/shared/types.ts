@@ -556,10 +556,7 @@ export interface BookkeeperApi {
   masterImport: {
     pickFile(): Promise<Result<ImportFileInfo>>;
     selectSheet(name: string): Promise<Result<ImportFileInfo>>;
-    loadPaste(
-      text: string,
-      mode: HeaderMode | boolean,
-    ): Promise<Result<ImportFileInfo>>;
+    loadPaste(text: string, mode: HeaderMode): Promise<Result<ImportFileInfo>>;
     analyze(mapping: ColumnMapping): Promise<Result<MasterAnalysis>>;
     commitPlan(
       mapping: ColumnMapping,

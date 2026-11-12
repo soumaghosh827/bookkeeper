@@ -146,13 +146,6 @@ export function findHeader(
   return { index: i >= 0 ? i : 0, score: bestScore };
 }
 
-export const findHeaderRow = (
-  db: DB,
-  grid: string[][],
-  synonyms: Map<string, string>,
-  customScope?: string,
-): number => findHeader(db, grid, synonyms, customScope).index;
-
 /** A row of real data, not column titles: it holds a valid IFSC or a long number (account numbers have 8+ digits). */
 export function rowLooksLikeData(cells: string[]): boolean {
   return cells.some((c) => {
@@ -279,13 +272,6 @@ export function listSheets(
 }
 
 // ---------- accounts and saved mappings ----------
-/** Finds a stored account by exact account number. A master account wins over a one-off; the oldest wins among equals. */
-export function accountFinder(db: DB) {
-  const q = db.prepare(
-    "SELECT id, payee, bank, branch, account_no, ifsc, remarks, in_master, extra FROM accounts WHERE account_no = ? ORDER BY in_master DESC, created_at ASC LIMIT 1",
-  );
-  return (accountNo: string) => (q.get(accountNo) as any) ?? null;
-}
 
 /** Remembers which field each header was mapped to, so the next import maps itself. Call inside the import's DB transaction. */
 export function saveHeaderMappings(

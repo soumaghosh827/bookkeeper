@@ -3,7 +3,13 @@
 import { randomUUID } from "crypto";
 import { audit } from "./audit";
 import { refreshAccountStats } from "./accounts";
-import { addReference } from "./txReferences";
+import {
+  addReference,
+  cleanRef,
+  getReferences,
+  refsText,
+} from "./txReferences";
+import { loadSavedTx, matchKey, matchRows, type SavedTx } from "./txMatch";
 import type { DB } from "../db";
 import type { Workbook } from "exceljs";
 import { formatPaise, parseDate, todayIso } from "@shared/format";
@@ -31,7 +37,10 @@ import type {
   TxImportRejected as Rejected,
   TxImportException as TxException,
   SheetChoice,
+  TxMatchKind,
+  TxMatchRow,
 } from "@shared/types";
+import { MATCH_CHOICES, MATCH_RECOMMENDED } from "@shared/types";
 import {
   norm,
   DAMAGED_MSG,
@@ -89,7 +98,8 @@ export interface PlannedTx {
   utr: string;
   notes: string;
   extra: Record<string, string>;
-  status: "fresh" | "exists";
+  status: "fresh" | "exists" | "ask"; // exists = same saved transaction; ask = looks like one, the user decides
+  match?: { kind: TxMatchKind; savedUid: string };
   flags: string[]; // ids of exceptions that need a decision first
 }
 export interface TxImportPlan {
@@ -431,8 +441,8 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
   for (const no of dropped) groups.delete(no);
   const rows = parsed.filter((p) => !dropped.has(p.no));
 
-  // transactions already in the database inside the file's date range: matching is by COUNT, so genuine twins still import
-  const counts = new Map<string, number>();
+  // saved transactions inside the file's date range, grouped by account + amount + date (two queries in total)
+  let saved = new Map<string, SavedTx[]>();
   if (rows.length) {
     let lo = rows[0].date,
       hi = rows[0].date;
@@ -440,26 +450,7 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
       if (p.date < lo) lo = p.date;
       if (p.date > hi) hi = p.date;
     }
-    const found = db
-      .prepare(
-        `SELECT a.account_no AS no, t.amount_paise AS amt, t.entry_date AS d,
-                COALESCE((SELECT x.ref_no FROM transaction_references x WHERE x.transaction_id = t.uid ORDER BY x.id LIMIT 1), '') AS ref,
-                COUNT(*) AS c
-           FROM transactions t JOIN accounts a ON a.id = t.account_id
-          WHERE t.deleted_at IS NULL AND t.entry_date BETWEEN ? AND ?
-          GROUP BY a.account_no, t.amount_paise, t.entry_date, ref`,
-      )
-      .all(lo, hi) as {
-      no: string;
-      amt: number;
-      d: string;
-      ref: string;
-      c: number;
-    }[];
-    for (const r of found) {
-      const k = txKey(r.no, r.amt, r.d, r.ref);
-      counts.set(k, (counts.get(k) ?? 0) + r.c);
-    }
+    saved = loadSavedTx(db, lo, hi);
   }
 
   // pass 2: classify transactions, raise exceptions
@@ -534,18 +525,23 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
     }
   }
 
+  const outcomes = matchRows(
+    rows.map((p) => ({ key: matchKey(p.no, p.paise, p.date), ref: p.ref })),
+    saved,
+  );
+  const matches: TxMatchRow[] = [];
   const seen = new Map<string, number>();
   const txs: PlannedTx[] = [];
   let fresh = 0,
     exists = 0;
-  for (const p of rows) {
+  for (const [idx, p] of rows.entries()) {
     const key = txKey(p.no, p.paise, p.date, p.ref);
-    const i = (seen.get(key) ?? 0) + 1;
-    seen.set(key, i);
-    const status: "fresh" | "exists" =
-      i <= (counts.get(key) ?? 0) ? "exists" : "fresh";
+    seen.set(key, (seen.get(key) ?? 0) + 1);
+    const m = outcomes[idx];
+    const status: PlannedTx["status"] =
+      m.type === "same" ? "exists" : m.type === "ask" ? "ask" : "fresh";
     const flags: string[] = [];
-    if (status === "fresh") {
+    if (status !== "exists") {
       const payee =
         groups.get(p.no)?.values.payee || index.byNo.get(p.no)?.payee || "";
       if (p.paise === 0) {
@@ -569,7 +565,22 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
           detail: `High value: ₹${formatPaise(p.paise)}`,
         });
       }
-      fresh++;
+      if (m.type === "new") fresh++;
+      if (m.type === "ask")
+        matches.push({
+          row: p.n,
+          kind: m.kind,
+          account_no: p.no,
+          payee,
+          amount_paise: p.paise,
+          entry_date: p.date,
+          fileRef: p.ref,
+          saved: {
+            uid: m.saved.uid,
+            refs: m.saved.refs,
+            created_at: m.saved.created_at,
+          },
+        });
     } else exists++;
     txs.push({
       row: p.n,
@@ -581,6 +592,8 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
       notes: p.notes,
       extra: p.extra,
       status,
+      match:
+        m.type === "ask" ? { kind: m.kind, savedUid: m.saved.uid } : undefined,
       flags,
     });
   }
@@ -607,11 +620,14 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
     exceptions,
     rejected,
   };
+
   return {
     total: s.rows.length,
     dateMode,
     accounts: { new: nNew, existing: nExisting, oneOffExisting: nOneOff },
     transactions: { fresh, exists, twinGroups },
+    matches,
+    linkedSame: exists,
     rejectedCount: rejected.length,
     rejected: rejected.slice(0, 200),
     exceptions,
@@ -625,8 +641,7 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
     throw new Error("Nothing to import. Start the import again.");
   if (
     !["master", "oneoff"].includes(opts.newAccounts) ||
-    !["keep", "update"].includes(opts.masterDiff) ||
-    !["skip", "import"].includes(opts.existingTx)
+    !["keep", "update"].includes(opts.masterDiff)
   )
     throw new Error("Invalid import options");
   analyze(db, plan.mapping); // re-check against the database as it is right now
@@ -649,7 +664,7 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
     t: PlannedTx,
   ): "yes" | "exists" | "unconfirmed" | "lookalike" => {
     if (skipAccounts.has(t.account_no)) return "lookalike";
-    if (t.status === "exists" && opts.existingTx === "skip") return "exists";
+    if (t.status === "exists") return "exists"; // same saved transaction (shared reference): nothing to add
     for (const id of t.flags) {
       const kind = id.startsWith("zero:") ? "zero_amount" : "high_value";
       if (dec[id] === "skip" || (dec[id] !== "import" && !confirmed.has(kind)))
@@ -682,9 +697,50 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
       txAdded = 0,
       skipEx = 0,
       skipUn = 0,
-      skipLike = 0;
+      skipLike = 0,
+      linked = 0,
+      skipMatch = 0;
 
     for (const t of p.txs) {
+      if (t.status === "ask" && t.match) {
+        const kind = t.match.kind;
+        let choice =
+          opts.matchChoices?.[String(t.row)] ??
+          opts.matchDefaults?.[kind] ??
+          MATCH_RECOMMENDED[kind];
+        if (!MATCH_CHOICES[kind].includes(choice))
+          choice = MATCH_RECOMMENDED[kind];
+        if (choice === "skip") {
+          skipMatch++;
+          continue;
+        }
+        if (choice === "link") {
+          const before = getReferences(db, t.match.savedUid);
+          if (
+            addReference(db, t.match.savedUid, t.reference_no, {
+              batchId: batch,
+              now,
+            })
+          ) {
+            linked++;
+            audit(
+              db,
+              "transactions",
+              t.match.savedUid,
+              "update",
+              {
+                reference_no: [
+                  refsText(before),
+                  refsText([...before, cleanRef(t.reference_no)]),
+                ],
+              },
+              `Reference added by import of ${p.source}`,
+            );
+          }
+          continue;
+        }
+        // "new": falls through and is imported like any other new transaction
+      }
       const w = wanted(t);
       if (w === "exists") {
         skipEx++;
@@ -765,17 +821,24 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
 
     for (const id of touched) refreshAccountStats(db, id);
     if (p.hasHeader) saveHeaderMappings(db, p.headers, p.mapping); // the next import auto-maps the same headers
-    db.prepare(
-      "UPDATE import_batches SET acc_count = ?, tx_count = ?, account_changes = ? WHERE id = ?",
-    ).run(added, txAdded, JSON.stringify(changes), batch);
-    audit(db, "import_batches", String(batch), "create", {
-      file: [null, p.source],
-      transactions: [null, txAdded],
-      accounts_added: [null, added],
-      accounts_updated: [null, updated],
-    });
+    const wroteNothing = txAdded + added + changes.length + linked === 0;
+    if (wroteNothing) {
+      // nothing was written, so there is nothing to undo and no batch to show in the undo stack
+      db.prepare("DELETE FROM import_batches WHERE id = ?").run(batch);
+    } else {
+      db.prepare(
+        "UPDATE import_batches SET acc_count = ?, tx_count = ?, account_changes = ? WHERE id = ?",
+      ).run(added, txAdded, JSON.stringify(changes), batch);
+      audit(db, "import_batches", String(batch), "create", {
+        file: [null, p.source],
+        transactions: [null, txAdded],
+        accounts_added: [null, added],
+        accounts_updated: [null, updated],
+        references_linked: [null, linked],
+      });
+    }
     result = {
-      batchId: batch,
+      batchId: wroteNothing ? 0 : batch,
       accountsAdded: added,
       accountsUpdated: updated,
       accountsPromoted: promoted,
@@ -783,6 +846,8 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
       txSkippedExisting: skipEx,
       txSkippedUnconfirmed: skipUn,
       txSkippedLookAlike: skipLike,
+      refsLinked: linked,
+      txSkippedMatched: skipMatch,
     };
   })();
   clearSession(); // a second click on Import cannot commit the same file twice

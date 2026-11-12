@@ -163,7 +163,9 @@
 
 /* ----- Import ----- */
 .import {
+  width: 100%;
   max-width: 980px;
+  margin-inline: auto; /* centered on the screen */
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);

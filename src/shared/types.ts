@@ -271,6 +271,37 @@ export interface TxImportRejected {
   reason: string;
   values: Record<string, string>;
 }
+
+// ---------- import matching (decisions about rows that look like an already saved transaction) ----------
+/** ref_link: the file row has a reference, the saved transaction has none.
+ *  ref_differs: both have references and none is shared.
+ *  blank_match: the file row has no reference. */
+export type TxMatchKind = "ref_link" | "ref_differs" | "blank_match";
+/** link = add the file's reference to the saved transaction (no new transaction); new = import as a separate transaction; skip = ignore the row. */
+export type TxMatchChoice = "link" | "new" | "skip";
+
+export const MATCH_RECOMMENDED: Record<TxMatchKind, TxMatchChoice> = {
+  ref_link: "link",
+  ref_differs: "new",
+  blank_match: "skip",
+};
+/** Choices offered per kind, the recommended one first. A blank row has no reference to add, so it cannot "link". */
+export const MATCH_CHOICES: Record<TxMatchKind, TxMatchChoice[]> = {
+  ref_link: ["link", "new", "skip"],
+  ref_differs: ["new", "link", "skip"],
+  blank_match: ["skip", "new"],
+};
+export interface TxMatchRow {
+  row: number; // Excel row of the file transaction
+  kind: TxMatchKind;
+  account_no: string;
+  payee: string;
+  amount_paise: number;
+  entry_date: string; // ISO
+  fileRef: string; // "" = the file row has no reference
+  saved: { uid: string; refs: string[]; created_at: string }; // the saved transaction this row was paired with
+}
+
 export type TxImportExceptionKind =
   | "master_diff"
   | "file_conflict"
@@ -310,13 +341,16 @@ export interface TxImportAnalysis {
   rejectedCount: number;
   rejected: TxImportRejected[]; // first 200
   exceptions: TxImportException[];
+  matches: TxMatchRow[]; // file rows that look like a saved transaction and need a decision (recommended action is the default)
+  linkedSame: number; // file rows that are the same saved transaction (shared reference): nothing new is added
 }
 export interface TxImportOptions {
   newAccounts: "master" | "oneoff";
   masterDiff: "keep" | "update";
-  existingTx: "skip" | "import";
   confirmKinds?: ("zero_amount" | "high_value")[];
   decisions?: Record<string, "import" | "skip" | "update" | "keep">;
+  matchDefaults?: Partial<Record<TxMatchKind, TxMatchChoice>>; // bulk choice per kind
+  matchChoices?: Record<string, TxMatchChoice>; // per-row override, keyed by Excel row number
   fieldChoices?: Record<string, Partial<Record<AccField, string>>>; // account_no -> field -> chosen value
 }
 export interface TxImportResult {
@@ -328,6 +362,8 @@ export interface TxImportResult {
   txSkippedExisting: number;
   txSkippedUnconfirmed: number;
   txSkippedLookAlike: number;
+  refsLinked: number; // references added to existing transactions
+  txSkippedMatched: number; // file rows skipped because they matched a saved transaction
 }
 export interface TxUndoInfo {
   id: number;

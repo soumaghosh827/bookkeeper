@@ -10,12 +10,19 @@ import type {
   TxImportFileInfo,
   TxImportOptions,
   TxImportResult,
+  TxMatchChoice,
+  TxMatchKind,
 } from "@shared/types";
-import Modal from "@/components/Modal";
+import ImportShell from "../components/ImportShell";
 import AskDialog from "@/components/AskDialog";
 import AccountConflictCard from "../components/AccountConflictCard";
 import MappingTable from "../components/MappingTable";
 import SheetPicker from "../components/SheetPicker";
+import MatchDecisionCard, {
+  effectiveChoice,
+  type MatchDefaults,
+  type MatchOverrides,
+} from "../components/MatchDecisionCard";
 import { useAccountChoices } from "../lib/useAccountChoices";
 
 type Step = "pick" | "map" | "review" | "done";
@@ -73,9 +80,12 @@ export default function TxImportDialog({
   const [custom, setCustom] = useState<CustomColumn[]>([]);
   const [an, setAn] = useState<TxImportAnalysis | null>(null);
   const [opt, setOpt] = useState<
-    Pick<TxImportOptions, "newAccounts" | "masterDiff" | "existingTx">
-  >({ newAccounts: "master", masterDiff: "keep", existingTx: "skip" });
+    Pick<TxImportOptions, "newAccounts" | "masterDiff">
+  >({ newAccounts: "master", masterDiff: "keep" });
   const [kinds, setKinds] = useState<Set<AmountKind>>(new Set());
+  const [matchDef, setMatchDef] = useState<MatchDefaults>({}); // group choice per kind
+  const [matchOv, setMatchOv] = useState<MatchOverrides>({}); // single-row choices
+  const [reviewed, setReviewed] = useState(false);
   const [showRejected, setShowRejected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [repeat, setRepeat] = useState<TxImportFileInfo | null>(null); // a file imported before, waiting for the person's choice
@@ -149,6 +159,9 @@ export default function TxImportDialog({
       setAn(r.data!);
       resetChoices();
       setKinds(new Set());
+      setMatchDef({});
+      setMatchOv({});
+      setReviewed(false);
       setShowRejected(false);
       setStep("review");
     });
@@ -160,6 +173,8 @@ export default function TxImportDialog({
         confirmKinds: [...kinds],
         decisions: dec,
         fieldChoices: fc,
+        matchDefaults: matchDef,
+        matchChoices: matchOv,
       });
       if (r.ok) {
         setResult(r.data!);
@@ -224,10 +239,21 @@ export default function TxImportDialog({
   const skippedNos = new Set(skippedLike.map((e) => e.account_no));
   const likeRows = skippedLike.reduce((s, e) => s + e.rowCount, 0);
 
+  const matches = an?.matches ?? [];
+  const choiceByRow = new Map(
+    matches.map((m) => [m.row, effectiveChoice(m, matchDef, matchOv)]),
+  );
+  const choices = [...choiceByRow.values()];
+  const newFromMatches = choices.filter((c) => c === "new").length;
+  const linkCount = choices.filter((c) => c === "link").length;
+  const needsReview = linkCount + newFromMatches > 0; // something will be written from the decision rows
+
+  // zero / high-value checks only matter for rows that will really be imported as new
   const blocked = exc.filter(
     (e) =>
       isAmt(e.kind) &&
       !skippedNos.has(e.account_no) &&
+      (choiceByRow.get(e.rows[0]) ?? "new") === "new" &&
       !(
         dec[e.id] === "import" ||
         (dec[e.id] !== "skip" && kinds.has(e.kind as AmountKind))
@@ -235,11 +261,36 @@ export default function TxImportDialog({
   ).length;
 
   const willImport = an
-    ? an.transactions.fresh -
-      blocked -
-      likeRows +
-      (opt.existingTx === "import" ? an.transactions.exists : 0)
+    ? an.transactions.fresh + newFromMatches - blocked - likeRows
     : 0;
+
+  const importLabel =
+    willImport > 0 && linkCount > 0
+      ? `Import ${num(willImport)} new · link ${num(linkCount)} ${linkCount === 1 ? "reference" : "references"}`
+      : linkCount > 0 && willImport <= 0
+        ? `Add ${num(linkCount)} ${linkCount === 1 ? "reference" : "references"}`
+        : `Import ${num(willImport)} transactions`;
+  const nothingToDo = willImport <= 0 && linkCount === 0;
+
+  const onMatchDefault = (kind: TxMatchKind, choice: TxMatchChoice) => {
+    setMatchDef((d) => ({ ...d, [kind]: choice }));
+    setMatchOv((o) => {
+      const n = { ...o };
+      for (const m of matches) if (m.kind === kind) delete n[String(m.row)]; // a group choice replaces single-row ones
+      return n;
+    });
+    setReviewed(false);
+  };
+
+  const onMatchOverride = (row: number, choice: TxMatchChoice | null) => {
+    setMatchOv((o) => {
+      const n = { ...o };
+      if (choice) n[String(row)] = choice;
+      else delete n[String(row)];
+      return n;
+    });
+    setReviewed(false);
+  };
 
   const optionLabel = (k: (typeof CORE)[number]) =>
     k === "remarks"
@@ -328,11 +379,8 @@ export default function TxImportDialog({
     );
 
   const actions =
-    step === "pick" ? (
-      <button onClick={close}>Cancel</button>
-    ) : step === "map" ? (
+    step === "map" ? (
       <>
-        <button onClick={close}>Cancel</button>
         <button
           onClick={() => {
             setStep("pick");
@@ -351,28 +399,25 @@ export default function TxImportDialog({
       </>
     ) : step === "review" ? (
       <>
-        <button onClick={close}>Cancel</button>
         <button onClick={() => setStep("map")}>Back to columns</button>
         <button
           className="primary"
-          disabled={busy || willImport === 0}
+          disabled={busy || nothingToDo || (needsReview && !reviewed)}
           onClick={doImport}
         >
-          Import {num(willImport)} transactions
+          {importLabel}
         </button>
       </>
-    ) : (
-      <button className="primary" onClick={close}>
-        Close
-      </button>
-    );
+    ) : null;
 
   return (
     <>
-      <Modal
+      <ImportShell
         title="Import transactions from Excel"
-        wide
-        onClose={busy ? undefined : close}
+        closeLabel={step === "done" ? "Close" : "Cancel"}
+        onClose={close}
+        busy={busy}
+        error={err}
         actions={actions}
       >
         {step === "pick" && (
@@ -440,8 +485,13 @@ export default function TxImportDialog({
                 {num(an.transactions.fresh)} new transactions
               </span>
               {an.transactions.exists > 0 && (
+                <span className="chip">
+                  {num(an.transactions.exists)} already saved (same reference)
+                </span>
+              )}
+              {matches.length > 0 && (
                 <span className="chip warn">
-                  {num(an.transactions.exists)} already saved in Transactions
+                  {num(matches.length)} look already saved · check below
                 </span>
               )}
               <span className="chip">{num(an.accounts.new)} new accounts</span>
@@ -499,6 +549,7 @@ export default function TxImportDialog({
                   </select>
                 </div>
               )}
+
               {count.master_diff > 0 && (
                 <div className="field" style={{ maxWidth: 560 }}>
                   <label>
@@ -525,32 +576,7 @@ export default function TxImportDialog({
                   </select>
                 </div>
               )}
-              {an.transactions.exists > 0 && (
-                <div className="field" style={{ maxWidth: 560 }}>
-                  <label>
-                    Rows in this file that match a transaction already saved in
-                    the app ({num(an.transactions.exists)}): same account,
-                    amount, date and reference
-                  </label>
-                  <select
-                    value={opt.existingTx}
-                    onChange={(e) =>
-                      setOpt({
-                        ...opt,
-                        existingTx: e.target
-                          .value as TxImportOptions["existingTx"],
-                      })
-                    }
-                  >
-                    <option value="skip">
-                      Skip them, don't add duplicates (recommended)
-                    </option>
-                    <option value="import">
-                      Add them again as new transactions
-                    </option>
-                  </select>
-                </div>
-              )}
+
               {count.zero_amount > 0 && (
                 <label
                   className="check"
@@ -564,6 +590,7 @@ export default function TxImportDialog({
                   Import the {num(count.zero_amount)} rows with a zero amount
                 </label>
               )}
+
               {count.high_value > 0 && (
                 <label
                   className="check"
@@ -577,9 +604,10 @@ export default function TxImportDialog({
                   Import the {num(count.high_value)} rows of ₹1 Cr or more
                 </label>
               )}
+
               {an.accounts.new === 0 &&
                 count.master_diff === 0 &&
-                an.transactions.exists === 0 &&
+                matches.length === 0 &&
                 count.zero_amount === 0 &&
                 count.high_value === 0 &&
                 count.look_alike === 0 && (
@@ -588,6 +616,30 @@ export default function TxImportDialog({
                   </p>
                 )}
             </div>
+
+            <MatchDecisionCard
+              matches={matches}
+              defaults={matchDef}
+              overrides={matchOv}
+              onDefault={onMatchDefault}
+              onOverride={onMatchOverride}
+              labels={labels}
+              maxRows={MAX_ROWS}
+            />
+            {needsReview && (
+              <label
+                className="check"
+                style={{ display: "flex", marginBottom: 12 }}
+              >
+                <input
+                  type="checkbox"
+                  checked={reviewed}
+                  onChange={(e) => setReviewed(e.target.checked)}
+                />{" "}
+                I have checked what happens to these{" "}
+                {num(linkCount + newFromMatches)} rows
+              </label>
+            )}
 
             {excTable(
               likeExc,
@@ -688,6 +740,18 @@ export default function TxImportDialog({
                   {num(result.txSkippedExisting)} skipped: already saved
                 </span>
               )}
+              {result.refsLinked > 0 && (
+                <span className="chip ok">
+                  {num(result.refsLinked)} references added to saved
+                  transactions
+                </span>
+              )}
+              {result.txSkippedMatched > 0 && (
+                <span className="chip">
+                  {num(result.txSkippedMatched)} skipped: matched a saved
+                  transaction
+                </span>
+              )}
               {result.txSkippedUnconfirmed > 0 && (
                 <span className="chip warn">
                   {num(result.txSkippedUnconfirmed)} skipped: zero or
@@ -722,8 +786,7 @@ export default function TxImportDialog({
             </p>
           </div>
         )}
-        {err && <p className="error">{err}</p>}
-      </Modal>
+      </ImportShell>
 
       {repeat?.alreadyImported && (
         <AskDialog

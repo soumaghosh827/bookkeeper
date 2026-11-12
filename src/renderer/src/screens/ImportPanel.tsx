@@ -11,6 +11,7 @@ import AccountConflictCard from "../components/AccountConflictCard";
 import MappingTable from "../components/MappingTable";
 import SheetPicker from "../components/SheetPicker";
 import AskDialog from "../components/AskDialog";
+import ImportShell from "../components/ImportShell";
 import { useAccountChoices } from "../lib/useAccountChoices";
 
 type Step = "source" | "map" | "done";
@@ -141,15 +142,13 @@ export default function ImportPanel({
         : `Import ${newCount} new`;
 
   return (
-    <div className={`import${an ? " is-review" : ""}`}>
-      <div className="toolbar">
-        <h2>Import into {masterName}</h2>
-        <span className="grow" />
-        <button onClick={() => onClose(step === "done")}>
-          {step === "done" ? "Close" : "Cancel"}
-        </button>
-      </div>
-
+    <ImportShell
+      title={`Import into ${masterName}`}
+      closeLabel={step === "done" ? "Close" : "Cancel"}
+      onClose={() => onClose(step === "done")}
+      review={!!an}
+      error={err}
+    >
       {step === "source" && (
         <>
           <div className="card">
@@ -458,8 +457,6 @@ export default function ImportPanel({
           <p>Continuing only adds or changes what is different.</p>
         </AskDialog>
       )}
-
-      {err && <p className="error">{err}</p>}
-    </div>
+    </ImportShell>
   );
 }

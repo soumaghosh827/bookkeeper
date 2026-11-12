@@ -220,6 +220,21 @@ export default function TransactionsScreen({
     setSelected(new Set());
   };
 
+  if (importOpen)
+    return (
+      <TxImportDialog
+        labels={labels}
+        masterName={masterName}
+        onClose={(changed) => {
+          setImportOpen(false);
+          if (changed) {
+            onChanged?.();
+            onMasterChanged?.();
+          }
+        }}
+      />
+    );
+
   return (
     <>
       <div className="toolbar">
@@ -428,20 +443,6 @@ export default function TransactionsScreen({
             from the report list too.
           </p>
         </AskDialog>
-      )}
-
-      {importOpen && (
-        <TxImportDialog
-          labels={labels}
-          masterName={masterName}
-          onClose={(changed) => {
-            setImportOpen(false);
-            if (changed) {
-              onChanged?.();
-              onMasterChanged?.();
-            }
-          }}
-        />
       )}
 
       {element}

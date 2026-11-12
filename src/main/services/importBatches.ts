@@ -2,6 +2,7 @@
 import { audit } from "./audit";
 import { refreshAccountStats } from "./accounts";
 import type { DB } from "../db";
+import { getReferences, refsText } from "./txReferences";
 
 export interface AccRow {
   id: string;
@@ -29,6 +30,7 @@ export interface UndoInfo {
   edited: number; // imported transactions changed since the import (e.g. UTR added); undo deletes them too
   newAccounts: number;
   inReports: number; // imported transactions already used in a saved report
+  refsLinked: number; // references this import added to transactions that already existed (undo removes them)
   canUndo: boolean;
 }
 
@@ -58,6 +60,13 @@ export function undoInfo(db: DB): UndoInfo | null {
       "SELECT COUNT(DISTINCT tx_uid) AS n FROM report_items WHERE tx_uid IN (SELECT uid FROM transactions WHERE batch_id = ?)",
     )
     .get(b.id) as { n: number };
+  const l = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM transaction_references r
+        WHERE r.batch_id = ?
+          AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.uid = r.transaction_id AND t.batch_id = ?)`,
+    )
+    .get(b.id, b.id) as { n: number };
   return {
     id: b.id,
     kind: b.kind,
@@ -67,6 +76,7 @@ export function undoInfo(db: DB): UndoInfo | null {
     edited: t.edited,
     newAccounts: b.acc_count,
     inReports: r.n,
+    refsLinked: l.n,
     canUndo: r.n === 0,
   };
 }
@@ -91,9 +101,33 @@ export function undoLastImport(db: DB) {
     accountsKept: 0,
     reverted: 0,
     revertSkipped: 0,
+    refsRemoved: 0,
   };
 
   db.transaction(() => {
+    // references the import linked to transactions that existed before it (the import's own transactions go below, with their references)
+    const linked = db
+      .prepare(
+        `SELECT r.id, r.transaction_id AS uid FROM transaction_references r
+          WHERE r.batch_id = ?
+            AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.uid = r.transaction_id AND t.batch_id = ?)`,
+      )
+      .all(info.id, info.id) as { id: number; uid: string }[];
+    for (const l of linked) {
+      const before = getReferences(db, l.uid);
+      db.prepare("DELETE FROM transaction_references WHERE id = ?").run(l.id);
+      audit(
+        db,
+        "transactions",
+        l.uid,
+        "update",
+        {
+          reference_no: [refsText(before), refsText(getReferences(db, l.uid))],
+        },
+        "Reference removed: import undone",
+      );
+      out.refsRemoved++;
+    }
     const touched = (
       db
         .prepare(
@@ -144,6 +178,7 @@ export function undoLastImport(db: DB) {
         transactions: [out.transactions, null],
         accounts: [out.accountsRemoved, null],
         accounts_restored: [out.reverted, null],
+        references_removed: [out.refsRemoved, null],
       },
       info.kind === "master" ? "Accounts import undone" : "Import undone",
     );

@@ -44,7 +44,6 @@ CREATE TABLE transactions (
   uid          TEXT PRIMARY KEY,
   account_id   TEXT NOT NULL REFERENCES accounts(id),
   amount_paise INTEGER NOT NULL DEFAULT 0,
-  reference_no TEXT NOT NULL DEFAULT '',
   utr          TEXT NOT NULL DEFAULT '',
   notes        TEXT NOT NULL DEFAULT '',
   entry_date   TEXT NOT NULL,
@@ -53,7 +52,6 @@ CREATE TABLE transactions (
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL
 );
-CREATE INDEX idx_tx_ref     ON transactions(reference_no);
 CREATE INDEX idx_tx_date    ON transactions(entry_date);
 CREATE INDEX idx_tx_amount  ON transactions(amount_paise);
 CREATE INDEX idx_tx_utr     ON transactions(utr);
@@ -137,6 +135,26 @@ ALTER TABLE transactions ADD COLUMN batch_id INTEGER REFERENCES import_batches(i
 CREATE INDEX idx_acc_batch ON accounts(batch_id);
 CREATE INDEX idx_tx_batch  ON transactions(batch_id);
 CREATE INDEX idx_batch_hash ON import_batches(file_hash);
+`,
+  },
+  {
+    version: 4,
+    sql: `
+-- One row per reference number linked to a transaction (a transaction can have many).
+-- ref_key = ref_no lower-cased with all spaces removed; this is what matching and uniqueness use.
+CREATE TABLE transaction_references (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  transaction_id TEXT NOT NULL REFERENCES transactions(uid) ON DELETE CASCADE,
+  ref_no         TEXT NOT NULL,
+  ref_key        TEXT NOT NULL,
+  report_id      INTEGER REFERENCES reports(id) ON DELETE SET NULL,
+  batch_id       INTEGER REFERENCES import_batches(id) ON DELETE SET NULL,
+  created_at     TEXT NOT NULL,
+  UNIQUE (transaction_id, ref_key)
+);
+CREATE INDEX idx_txref_ref   ON transaction_references(ref_key);
+CREATE INDEX idx_txref_batch ON transaction_references(batch_id);
+CREATE INDEX idx_txref_report ON transaction_references(report_id);
 `,
   },
 ];

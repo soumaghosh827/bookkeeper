@@ -3,6 +3,7 @@
 import { randomUUID } from "crypto";
 import { audit } from "./audit";
 import { refreshAccountStats } from "./accounts";
+import { addReference } from "./txReferences";
 import type { DB } from "../db";
 import type { Workbook } from "exceljs";
 import { formatPaise, parseDate, todayIso } from "@shared/format";
@@ -441,10 +442,12 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
     }
     const found = db
       .prepare(
-        `SELECT a.account_no AS no, t.amount_paise AS amt, t.entry_date AS d, t.reference_no AS ref, COUNT(*) AS c
+        `SELECT a.account_no AS no, t.amount_paise AS amt, t.entry_date AS d,
+                COALESCE((SELECT x.ref_no FROM transaction_references x WHERE x.transaction_id = t.uid ORDER BY x.id LIMIT 1), '') AS ref,
+                COUNT(*) AS c
            FROM transactions t JOIN accounts a ON a.id = t.account_id
           WHERE t.deleted_at IS NULL AND t.entry_date BETWEEN ? AND ?
-          GROUP BY a.account_no, t.amount_paise, t.entry_date, t.reference_no`,
+          GROUP BY a.account_no, t.amount_paise, t.entry_date, ref`,
       )
       .all(lo, hi) as {
       no: string;
@@ -663,8 +666,8 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
   );
   const writer = accountWriter(db);
   const insTx = db.prepare(
-    `INSERT INTO transactions (uid, account_id, amount_paise, reference_no, utr, notes, entry_date, extra, created_at, updated_at, batch_id)
-     VALUES (@uid, @account_id, @amount, @ref, @utr, @notes, @date, @extra, @now, @now, @batch)`,
+    `INSERT INTO transactions (uid, account_id, amount_paise, utr, notes, entry_date, extra, created_at, updated_at, batch_id)
+     VALUES (@uid, @account_id, @amount, @utr, @notes, @date, @extra, @now, @now, @batch)`,
   );
 
   let result!: TxImportResult;
@@ -743,11 +746,11 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
         }
         ids.set(t.account_no, id);
       }
+      const uid = randomUUID();
       insTx.run({
-        uid: randomUUID(),
+        uid,
         account_id: id,
         amount: t.amount_paise,
-        ref: t.reference_no.slice(0, 100),
         utr: t.utr.slice(0, 100),
         notes: t.notes.slice(0, 500),
         date: t.entry_date,
@@ -755,6 +758,7 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
         now,
         batch,
       });
+      addReference(db, uid, t.reference_no, { batchId: batch, now });
       touched.add(id);
       txAdded++;
     }

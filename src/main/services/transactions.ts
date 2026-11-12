@@ -25,10 +25,20 @@ import {
   refreshAccountStats,
 } from "./accounts";
 import { addToPreview, removeFromPreview } from "./preview";
+import {
+  addReference,
+  getReferencesMap,
+  parseRefs,
+  refKey,
+  refsText,
+  setReferences,
+} from "./txReferences";
 
 const RC = "(SELECT COUNT(*) FROM report_items r WHERE r.tx_uid = t.uid)";
+// All references of a transaction as one text, for search/filter/sort. (Display order is set in withRefs below.)
+const REFS = `COALESCE((SELECT group_concat(ref_no, ', ') FROM transaction_references x WHERE x.transaction_id = t.uid), '')`;
 const COLS: Record<string, ColDef> = {
-  reference_no: { expr: "t.reference_no" },
+  reference_no: { expr: REFS },
   entry_date: { expr: "t.entry_date", kind: "date" },
   payee: { expr: "a.payee" },
   bank: { expr: "a.bank" },
@@ -40,13 +50,31 @@ const COLS: Record<string, ColDef> = {
   notes: { expr: "t.notes" },
   report_count: { expr: RC, kind: "count" },
 };
-const HAY = `a.payee||' '||a.bank||' '||a.branch||' '||a.account_no||' '||a.ifsc||' '||t.reference_no||' '||t.utr||' '||t.notes||' '||t.extra`;
+const HAY = `a.payee||' '||a.bank||' '||a.branch||' '||a.account_no||' '||a.ifsc||' '||${REFS}||' '||t.utr||' '||t.notes||' '||t.extra`;
 const SELECT = `SELECT t.*, a.payee, a.bank, a.branch, a.account_no, a.ifsc, ${RC} AS report_count,
   EXISTS(SELECT 1 FROM preview_items p WHERE p.tx_uid = t.uid) AS in_preview
   FROM transactions t JOIN accounts a ON a.id = t.account_id`;
 
-export const getRow = (db: DB, uid: string) =>
-  db.prepare(`${SELECT} WHERE t.uid = ?`).get(uid) as TxRow | undefined;
+/** Replaces each row's reference_no with all its references in the order they were added, e.g. "REF-101, REF-205". */
+function withRefs<T extends { uid: string; reference_no: string }>(
+  db: DB,
+  rows: T[],
+): T[] {
+  if (!rows.length) return rows;
+  const m = getReferencesMap(
+    db,
+    rows.map((r) => r.uid),
+  );
+  for (const r of rows) r.reference_no = refsText(m.get(r.uid) ?? []);
+  return rows;
+}
+
+export const getRow = (db: DB, uid: string) => {
+  const r = db.prepare(`${SELECT} WHERE t.uid = ?`).get(uid) as
+    | TxRow
+    | undefined;
+  return r ? withRefs(db, [r])[0] : undefined;
+};
 
 export function getRowsByUids(db: DB, uids: string[]): TxRow[] {
   const out: TxRow[] = [];
@@ -60,7 +88,7 @@ export function getRowsByUids(db: DB, uids: string[]): TxRow[] {
         .all(...part) as TxRow[]),
     );
   }
-  const by = new Map(out.map((r) => [r.uid, r]));
+  const by = new Map(withRefs(db, out).map((r) => [r.uid, r]));
   return uids.map((u) => by.get(u)).filter(Boolean) as TxRow[]; // keeps the caller's order
 }
 
@@ -71,6 +99,7 @@ export function listTransactions(db: DB, q: GridQuery): GridPage<TxRow> {
   const rows = db
     .prepare(`${SELECT} WHERE ${b.where} ORDER BY ${order} LIMIT ? OFFSET ?`)
     .all(...b.params, ...b.orderParams, limit, q.offset) as TxRow[];
+  withRefs(db, rows);
   const agg = db
     .prepare(
       `SELECT COUNT(*) AS total, COALESCE(SUM(t.amount_paise), 0) AS sum FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE ${b.where}`,
@@ -96,19 +125,37 @@ const checkDate = (s: unknown) => {
   if (!iso) throw new FieldError("Invalid date", "entry_date");
   return iso;
 };
+
+/**
+ * Same account + amount + date as another live transaction, unless the references rule it out:
+ * a warning is raised when either side has no reference, or they share one.
+ * Different references on both sides = possible genuine twins, no warning.
+ */
 const isDuplicate = (
   db: DB,
   accountId: string,
   amount: number,
   date: string,
-  ref: string,
+  refs: string[],
   excludeUid = "",
-) =>
-  !!db
+): boolean => {
+  const same = db
     .prepare(
-      "SELECT 1 FROM transactions WHERE account_id=? AND amount_paise=? AND entry_date=? AND reference_no=? AND deleted_at IS NULL AND uid<>? LIMIT 1",
+      "SELECT uid FROM transactions WHERE account_id=? AND amount_paise=? AND entry_date=? AND deleted_at IS NULL AND uid<>?",
     )
-    .get(accountId, amount, date, ref, excludeUid);
+    .all(accountId, amount, date, excludeUid) as { uid: string }[];
+  if (!same.length) return false;
+  const mine = new Set(refs.map(refKey).filter(Boolean));
+  if (!mine.size) return true;
+  const theirs = getReferencesMap(
+    db,
+    same.map((r) => r.uid),
+  );
+  return same.some((r) => {
+    const t = theirs.get(r.uid);
+    return !t || t.some((x) => mine.has(refKey(x)));
+  });
+};
 
 function amountNeeds(amount: number, c: Confirmations): ConfirmKind[] {
   const n: ConfirmKind[] = [];
@@ -135,7 +182,7 @@ export function createTransaction(
   if (accountId) {
     const a = getAccount(db, accountId);
     if (!a) return { ok: false, error: "Account not found" };
-    if (isDuplicate(db, accountId, amount, date, ref) && !c.duplicate)
+    if (isDuplicate(db, accountId, amount, date, [ref]) && !c.duplicate)
       needs.push("duplicate");
   } else if (input.account) {
     newAcc = prepareNewAccount(input.account);
@@ -154,19 +201,19 @@ export function createTransaction(
     if (newAcc)
       accountId = insertAccount(db, newAcc.a, !!input.account!.save_to_master);
     db.prepare(
-      `INSERT INTO transactions (uid, account_id, amount_paise, reference_no, utr, notes, entry_date, extra, created_at, updated_at)
-       VALUES (@uid, @account_id, @amount, @ref, @utr, @notes, @date, @extra, @now, @now)`,
+      `INSERT INTO transactions (uid, account_id, amount_paise, utr, notes, entry_date, extra, created_at, updated_at)
+       VALUES (@uid, @account_id, @amount, @utr, @notes, @date, @extra, @now, @now)`,
     ).run({
       uid,
       account_id: accountId,
       amount,
-      ref,
       utr: String(input.utr ?? "").trim(),
       notes: String(input.notes ?? "").trim(),
       date,
       extra: JSON.stringify(cleanExtra(input.extra)),
       now,
     });
+    addReference(db, uid, ref, { now });
     audit(db, "transactions", uid, "create", {
       amount_paise: [null, amount],
       entry_date: [null, date],
@@ -222,8 +269,11 @@ function applyChanges(
   if (ch.amount_paise !== undefined)
     next.amount_paise = checkAmount(ch.amount_paise);
   if (ch.entry_date !== undefined) next.entry_date = checkDate(ch.entry_date);
-  if (ch.reference_no !== undefined)
-    next.reference_no = String(ch.reference_no).trim().slice(0, 100);
+  if (
+    ch.reference_no !== undefined &&
+    String(ch.reference_no).trim() !== cur.reference_no
+  )
+    next.reference_no = refsText(parseRefs(ch.reference_no));
   if (ch.utr !== undefined) next.utr = String(ch.utr).trim().slice(0, 100);
   if (ch.notes !== undefined)
     next.notes = String(ch.notes).trim().slice(0, 500);
@@ -252,7 +302,7 @@ function applyChanges(
       cur.account_id,
       next.amount_paise,
       next.entry_date,
-      next.reference_no,
+      parseRefs(next.reference_no),
       uid,
     )
   )
@@ -260,17 +310,22 @@ function applyChanges(
   if (needs.length) return { ok: false, needs };
 
   db.transaction(() => {
+    const now = new Date().toISOString();
+    const { reference_no: _refText, ...cols } = next; // references live in transaction_references
     db.prepare(
-      "UPDATE transactions SET amount_paise=@amount_paise, entry_date=@entry_date, reference_no=@reference_no, utr=@utr, notes=@notes, extra=@extra, updated_at=@now WHERE uid=@uid",
+      "UPDATE transactions SET amount_paise=@amount_paise, entry_date=@entry_date, utr=@utr, notes=@notes, extra=@extra, updated_at=@now WHERE uid=@uid",
     ).run({
-      ...next,
+      ...cols,
       extra: JSON.stringify(extra),
-      now: new Date().toISOString(),
+      now,
       uid,
     });
+    if (diff.reference_no)
+      setReferences(db, uid, parseRefs(next.reference_no), now);
     audit(db, "transactions", uid, "update", diff, reason);
     refreshAccountStats(db, cur.account_id);
   })();
+
   return { ok: true, data: getRow(db, uid)! };
 }
 

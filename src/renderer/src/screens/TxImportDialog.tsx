@@ -12,6 +12,7 @@ import type {
   TxImportResult,
 } from "@shared/types";
 import Modal from "@/components/Modal";
+import AskDialog from "@/components/AskDialog";
 import AccountConflictCard from "../components/AccountConflictCard";
 import MappingTable from "../components/MappingTable";
 import SheetPicker from "../components/SheetPicker";
@@ -77,6 +78,7 @@ export default function TxImportDialog({
   const [kinds, setKinds] = useState<Set<AmountKind>>(new Set());
   const [showRejected, setShowRejected] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [repeat, setRepeat] = useState<TxImportFileInfo | null>(null); // a file imported before, waiting for the person's choice
   const [err, setErr] = useState("");
   const [result, setResult] = useState<TxImportResult | null>(null);
 
@@ -115,23 +117,29 @@ export default function TxImportDialog({
   const pickFile = () =>
     guard(async () => {
       const r = await window.api.txImport.pickFile();
-      if (r.ok) {
-        setInfo(r.data!);
-        setMapping(r.data!.mapping);
-        setAn(null);
-        setStep("map");
-      } else if (r.error !== "Cancelled")
+      if (r.ok) loaded(r.data!);
+      else if (r.error !== "Cancelled")
         setErr(r.error ?? "Could not read the file");
     });
+
+  const proceed = (i: TxImportFileInfo) => {
+    setInfo(i);
+    setMapping(i.mapping);
+    setAn(null);
+    setStep("map");
+  };
+
+  const loaded = (i: TxImportFileInfo) => {
+    if (i.alreadyImported)
+      setRepeat(i); // ask first; the column step opens only after "Continue anyway"
+    else proceed(i);
+  };
 
   const changeSheet = (name: string) =>
     guard(async () => {
       const r = await window.api.txImport.selectSheet(name);
-      if (r.ok) {
-        setInfo(r.data!);
-        setMapping(r.data!.mapping);
-        setAn(null);
-      } else setErr(r.error ?? "Could not read this sheet");
+      if (r.ok) loaded(r.data!);
+      else setErr(r.error ?? "Could not read this sheet");
     });
 
   const check = () =>
@@ -360,354 +368,390 @@ export default function TxImportDialog({
     );
 
   return (
-    <Modal
-      title="Import transactions from Excel"
-      wide
-      onClose={busy ? undefined : close}
-      actions={actions}
-    >
-      {step === "pick" && (
-        <div className="card">
-          <h3>Choose the Excel file</h3>
-          <p className="muted">
-            The sheet with the most compatible column names is chosen for you,
-            and you can change it on the next screen. Title or blank rows above
-            the column names are skipped automatically.
-          </p>
-          <p className="muted">
-            Needed columns: {REQUIRED.map((k) => labels[k]).join(", ")}. Each
-            row becomes one transaction; its account is added to your accounts
-            if it is not there yet. Rows without an account number are skipped.
-          </p>
-          <button className="primary" disabled={busy} onClick={pickFile}>
-            Choose Excel file…
-          </button>
-        </div>
-      )}
-
-      {step === "map" && info && (
-        <div className="card">
-          <h3>
-            Match columns{" "}
-            <small>
-              · {info.source} · {num(info.rowCount)} rows
-              {info.headerRow > 1
-                ? ` · column names found in row ${info.headerRow}`
-                : ""}
-            </small>
-          </h3>
-          <SheetPicker
-            sheets={info.sheets}
-            value={info.sheet}
-            disabled={busy}
-            onChange={changeSheet}
-          />
-          <MappingTable
-            headers={info.headers}
-            mapping={mapping}
-            onChange={changeMapping}
-            fields={CORE.map((k) => ({ key: k, label: optionLabel(k) }))}
-            custom={custom}
-          />
-          {missing.length > 0 && (
-            <p className="error" style={{ marginTop: 8 }}>
-              Still to match: {missing.map((k) => labels[k]).join(", ")}
+    <>
+      <Modal
+        title="Import transactions from Excel"
+        wide
+        onClose={busy ? undefined : close}
+        actions={actions}
+      >
+        {step === "pick" && (
+          <div className="card">
+            <h3>Choose the Excel file</h3>
+            <p className="muted">
+              The sheet with the most compatible column names is chosen for you,
+              and you can change it on the next screen. Title or blank rows
+              above the column names are skipped automatically.
             </p>
-          )}
-          {!mapping.includes("entry_date") && (
-            <p className="muted" style={{ marginTop: 8 }}>
-              No {labels.entry_date} column matched: every transaction will get
-              today’s date.
+            <p className="muted">
+              Needed columns: {REQUIRED.map((k) => labels[k]).join(", ")}. Each
+              row becomes one transaction; its account is added to your accounts
+              if it is not there yet. Rows without an account number are
+              skipped.
             </p>
-          )}
-        </div>
-      )}
-
-      {step === "review" && an && (
-        <>
-          <div className="chips" style={{ marginBottom: 12 }}>
-            <span className="chip ok">
-              {num(an.transactions.fresh)} new transactions
-            </span>
-            {an.transactions.exists > 0 && (
-              <span className="chip warn">
-                {num(an.transactions.exists)} already saved in Transactions
-              </span>
-            )}
-            <span className="chip">{num(an.accounts.new)} new accounts</span>
-            <span className="chip">
-              {num(an.accounts.existing)} accounts already saved
-            </span>
-            {an.transactions.twinGroups > 0 && (
-              <span className="chip">
-                {num(an.transactions.twinGroups)} sets of identical rows (all
-                kept)
-              </span>
-            )}
-            {an.rejectedCount > 0 && (
-              <span className="chip bad">
-                {num(an.rejectedCount)} rows rejected
-              </span>
-            )}
+            <button className="primary" disabled={busy} onClick={pickFile}>
+              Choose Excel file…
+            </button>
           </div>
-          {an.dateMode === "today" && (
-            <div className="notice" style={{ marginBottom: 12 }}>
-              No date column was matched, so every transaction gets today’s
-              date.
-            </div>
-          )}
+        )}
 
-          <div className="card" style={{ marginBottom: 12 }}>
-            <h3>What should happen</h3>
-            {(an.accounts.new > 0 || an.accounts.oneOffExisting > 0) && (
-              <div className="field" style={{ maxWidth: 560 }}>
-                <label>
-                  {an.accounts.new > 0
-                    ? `New accounts in this file (${num(an.accounts.new)})`
-                    : "Accounts in this file saved earlier as one-off"}
-                  {an.accounts.oneOffExisting > 0
-                    ? ` · ${num(an.accounts.oneOffExisting)} saved earlier as one-off (not in suggestions) follow this choice too`
-                    : ""}
-                </label>
-                <select
-                  value={opt.newAccounts}
-                  onChange={(e) =>
-                    setOpt({
-                      ...opt,
-                      newAccounts: e.target
-                        .value as TxImportOptions["newAccounts"],
-                    })
-                  }
-                >
-                  <option value="master">
-                    Add to {masterName} (used for suggestions)
-                  </option>
-                  <option value="oneoff">
-                    Use for these transactions only (not added to {masterName}{" "}
-                    or suggestions)
-                  </option>
-                </select>
-              </div>
-            )}
-            {count.master_diff > 0 && (
-              <div className="field" style={{ maxWidth: 560 }}>
-                <label>
-                  Accounts already saved whose details differ in this file (
-                  {num(count.master_diff)}): name, bank, branch or IFSC
-                </label>
-                <select
-                  value={opt.masterDiff}
-                  onChange={(e) =>
-                    setOpt({
-                      ...opt,
-                      masterDiff: e.target
-                        .value as TxImportOptions["masterDiff"],
-                    })
-                  }
-                >
-                  <option value="keep">
-                    Keep the saved details (recommended)
-                  </option>
-                  <option value="update">
-                    Replace with the file's details (also shows on their older
-                    transactions)
-                  </option>
-                </select>
-              </div>
-            )}
-            {an.transactions.exists > 0 && (
-              <div className="field" style={{ maxWidth: 560 }}>
-                <label>
-                  Rows in this file that match a transaction already saved in
-                  the app ({num(an.transactions.exists)}): same account, amount,
-                  date and reference
-                </label>
-                <select
-                  value={opt.existingTx}
-                  onChange={(e) =>
-                    setOpt({
-                      ...opt,
-                      existingTx: e.target
-                        .value as TxImportOptions["existingTx"],
-                    })
-                  }
-                >
-                  <option value="skip">
-                    Skip them, don't add duplicates (recommended)
-                  </option>
-                  <option value="import">
-                    Add them again as new transactions
-                  </option>
-                </select>
-              </div>
-            )}
-            {count.zero_amount > 0 && (
-              <label
-                className="check"
-                style={{ display: "flex", marginBottom: 6 }}
-              >
-                <input
-                  type="checkbox"
-                  checked={kinds.has("zero_amount")}
-                  onChange={() => toggleKind("zero_amount")}
-                />{" "}
-                Import the {num(count.zero_amount)} rows with a zero amount
-              </label>
-            )}
-            {count.high_value > 0 && (
-              <label
-                className="check"
-                style={{ display: "flex", marginBottom: 6 }}
-              >
-                <input
-                  type="checkbox"
-                  checked={kinds.has("high_value")}
-                  onChange={() => toggleKind("high_value")}
-                />{" "}
-                Import the {num(count.high_value)} rows of ₹1 Cr or more
-              </label>
-            )}
-            {an.accounts.new === 0 &&
-              count.master_diff === 0 &&
-              an.transactions.exists === 0 &&
-              count.zero_amount === 0 &&
-              count.high_value === 0 &&
-              count.look_alike === 0 && (
-                <p className="muted">
-                  Nothing needs a decision. Everything in the file is clean.
-                </p>
-              )}
-          </div>
-
-          {excTable(
-            likeExc,
-            "Possible account number typos → Accounts table",
-            "same name and IFSC as an account already saved, under a different account number",
-          )}
-
-          <AccountConflictCard
-            items={accGroups.map((g) => ({
-              key: g.no,
-              account_no: g.no,
-              payee: g.payee,
-              rows: g.rows,
-              rowCount: g.rowCount,
-              decisionKey: g.diffId,
-              fields: [...g.fields.values()],
-            }))}
-            rule={opt.masterDiff}
-            decisions={dec}
-            onDecision={setDecision}
-            choices={fc}
-            onChoice={setChoice}
-            title="Account details → Accounts table"
-            hint="pick the value to store where the file or master disagree"
-            maxItems={MAX_ROWS}
-          />
-
-          {excTable(
-            txExc,
-            "Transaction checks → Transactions table",
-            "change a single row here; all others follow the ticks above",
-          )}
-
-          {an.rejectedCount > 0 && (
-            <div className="card">
-              <h3>
-                Rejected rows{" "}
-                <small>· {num(an.rejectedCount)} will not be imported</small>
-              </h3>
-              <p className="muted">
-                Fix them in Excel and import the file again. Rows already
-                imported are recognised and skipped.
+        {step === "map" && info && (
+          <div className="card">
+            <h3>
+              Match columns{" "}
+              <small>
+                · {info.source} · {num(info.rowCount)} rows
+                {info.headerRow > 1
+                  ? ` · column names found in row ${info.headerRow}`
+                  : ""}
+              </small>
+            </h3>
+            <SheetPicker
+              sheets={info.sheets}
+              value={info.sheet}
+              disabled={busy}
+              onChange={changeSheet}
+            />
+            <MappingTable
+              headers={info.headers}
+              mapping={mapping}
+              onChange={changeMapping}
+              fields={CORE.map((k) => ({ key: k, label: optionLabel(k) }))}
+              custom={custom}
+            />
+            {missing.length > 0 && (
+              <p className="error" style={{ marginTop: 8 }}>
+                Still to match: {missing.map((k) => labels[k]).join(", ")}
               </p>
-              <button
-                className="small"
-                onClick={() => setShowRejected((s) => !s)}
-              >
-                {showRejected ? "Hide list" : "Show list"}
-              </button>
-              {showRejected && (
-                <div style={{ maxHeight: 240, overflow: "auto", marginTop: 8 }}>
-                  <table className="maptable">
-                    <thead>
-                      <tr>
-                        <th>Row</th>
-                        <th>Reason</th>
-                        <th>{labels.payee}</th>
-                        <th>{labels.account_no}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {an.rejected.map((r) => (
-                        <tr key={r.row}>
-                          <td>{r.row}</td>
-                          <td className="error">{r.reason}</td>
-                          <td>{r.values.payee}</td>
-                          <td className="mono">{r.values.account_no}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            )}
+            {!mapping.includes("entry_date") && (
+              <p className="muted" style={{ marginTop: 8 }}>
+                No {labels.entry_date} column matched: every transaction will
+                get today’s date.
+              </p>
+            )}
+          </div>
+        )}
+
+        {step === "review" && an && (
+          <>
+            <div className="chips" style={{ marginBottom: 12 }}>
+              <span className="chip ok">
+                {num(an.transactions.fresh)} new transactions
+              </span>
+              {an.transactions.exists > 0 && (
+                <span className="chip warn">
+                  {num(an.transactions.exists)} already saved in Transactions
+                </span>
+              )}
+              <span className="chip">{num(an.accounts.new)} new accounts</span>
+              <span className="chip">
+                {num(an.accounts.existing)} accounts already saved
+              </span>
+              {an.transactions.twinGroups > 0 && (
+                <span className="chip">
+                  {num(an.transactions.twinGroups)} sets of identical rows (all
+                  kept)
+                </span>
+              )}
+              {an.rejectedCount > 0 && (
+                <span className="chip bad">
+                  {num(an.rejectedCount)} rows rejected
+                </span>
+              )}
+            </div>
+            {an.dateMode === "today" && (
+              <div className="notice" style={{ marginBottom: 12 }}>
+                No date column was matched, so every transaction gets today’s
+                date.
+              </div>
+            )}
+
+            <div className="card" style={{ marginBottom: 12 }}>
+              <h3>What should happen</h3>
+              {(an.accounts.new > 0 || an.accounts.oneOffExisting > 0) && (
+                <div className="field" style={{ maxWidth: 560 }}>
+                  <label>
+                    {an.accounts.new > 0
+                      ? `New accounts in this file (${num(an.accounts.new)})`
+                      : "Accounts in this file saved earlier as one-off"}
+                    {an.accounts.oneOffExisting > 0
+                      ? ` · ${num(an.accounts.oneOffExisting)} saved earlier as one-off (not in suggestions) follow this choice too`
+                      : ""}
+                  </label>
+                  <select
+                    value={opt.newAccounts}
+                    onChange={(e) =>
+                      setOpt({
+                        ...opt,
+                        newAccounts: e.target
+                          .value as TxImportOptions["newAccounts"],
+                      })
+                    }
+                  >
+                    <option value="master">
+                      Add to {masterName} (used for suggestions)
+                    </option>
+                    <option value="oneoff">
+                      Use for these transactions only (not added to {masterName}{" "}
+                      or suggestions)
+                    </option>
+                  </select>
                 </div>
               )}
-              {an.rejectedCount > an.rejected.length && (
-                <p className="muted" style={{ marginTop: 6 }}>
-                  Showing the first {an.rejected.length}.
+              {count.master_diff > 0 && (
+                <div className="field" style={{ maxWidth: 560 }}>
+                  <label>
+                    Accounts already saved whose details differ in this file (
+                    {num(count.master_diff)}): name, bank, branch or IFSC
+                  </label>
+                  <select
+                    value={opt.masterDiff}
+                    onChange={(e) =>
+                      setOpt({
+                        ...opt,
+                        masterDiff: e.target
+                          .value as TxImportOptions["masterDiff"],
+                      })
+                    }
+                  >
+                    <option value="keep">
+                      Keep the saved details (recommended)
+                    </option>
+                    <option value="update">
+                      Replace with the file's details (also shows on their older
+                      transactions)
+                    </option>
+                  </select>
+                </div>
+              )}
+              {an.transactions.exists > 0 && (
+                <div className="field" style={{ maxWidth: 560 }}>
+                  <label>
+                    Rows in this file that match a transaction already saved in
+                    the app ({num(an.transactions.exists)}): same account,
+                    amount, date and reference
+                  </label>
+                  <select
+                    value={opt.existingTx}
+                    onChange={(e) =>
+                      setOpt({
+                        ...opt,
+                        existingTx: e.target
+                          .value as TxImportOptions["existingTx"],
+                      })
+                    }
+                  >
+                    <option value="skip">
+                      Skip them, don't add duplicates (recommended)
+                    </option>
+                    <option value="import">
+                      Add them again as new transactions
+                    </option>
+                  </select>
+                </div>
+              )}
+              {count.zero_amount > 0 && (
+                <label
+                  className="check"
+                  style={{ display: "flex", marginBottom: 6 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={kinds.has("zero_amount")}
+                    onChange={() => toggleKind("zero_amount")}
+                  />{" "}
+                  Import the {num(count.zero_amount)} rows with a zero amount
+                </label>
+              )}
+              {count.high_value > 0 && (
+                <label
+                  className="check"
+                  style={{ display: "flex", marginBottom: 6 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={kinds.has("high_value")}
+                    onChange={() => toggleKind("high_value")}
+                  />{" "}
+                  Import the {num(count.high_value)} rows of ₹1 Cr or more
+                </label>
+              )}
+              {an.accounts.new === 0 &&
+                count.master_diff === 0 &&
+                an.transactions.exists === 0 &&
+                count.zero_amount === 0 &&
+                count.high_value === 0 &&
+                count.look_alike === 0 && (
+                  <p className="muted">
+                    Nothing needs a decision. Everything in the file is clean.
+                  </p>
+                )}
+            </div>
+
+            {excTable(
+              likeExc,
+              "Possible account number typos → Accounts table",
+              "same name and IFSC as an account already saved, under a different account number",
+            )}
+
+            <AccountConflictCard
+              items={accGroups.map((g) => ({
+                key: g.no,
+                account_no: g.no,
+                payee: g.payee,
+                rows: g.rows,
+                rowCount: g.rowCount,
+                decisionKey: g.diffId,
+                fields: [...g.fields.values()],
+              }))}
+              rule={opt.masterDiff}
+              decisions={dec}
+              onDecision={setDecision}
+              choices={fc}
+              onChoice={setChoice}
+              title="Account details → Accounts table"
+              hint="pick the value to store where the file or master disagree"
+              maxItems={MAX_ROWS}
+            />
+
+            {excTable(
+              txExc,
+              "Transaction checks → Transactions table",
+              "change a single row here; all others follow the ticks above",
+            )}
+
+            {an.rejectedCount > 0 && (
+              <div className="card">
+                <h3>
+                  Rejected rows{" "}
+                  <small>· {num(an.rejectedCount)} will not be imported</small>
+                </h3>
+                <p className="muted">
+                  Fix them in Excel and import the file again. Rows already
+                  imported are recognised and skipped.
                 </p>
+                <button
+                  className="small"
+                  onClick={() => setShowRejected((s) => !s)}
+                >
+                  {showRejected ? "Hide list" : "Show list"}
+                </button>
+                {showRejected && (
+                  <div
+                    style={{ maxHeight: 240, overflow: "auto", marginTop: 8 }}
+                  >
+                    <table className="maptable">
+                      <thead>
+                        <tr>
+                          <th>Row</th>
+                          <th>Reason</th>
+                          <th>{labels.payee}</th>
+                          <th>{labels.account_no}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {an.rejected.map((r) => (
+                          <tr key={r.row}>
+                            <td>{r.row}</td>
+                            <td className="error">{r.reason}</td>
+                            <td>{r.values.payee}</td>
+                            <td className="mono">{r.values.account_no}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {an.rejectedCount > an.rejected.length && (
+                  <p className="muted" style={{ marginTop: 6 }}>
+                    Showing the first {an.rejected.length}.
+                  </p>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {step === "done" && result && (
+          <div className="card">
+            <h3>Import finished</h3>
+            <p className="muted" style={{ margin: "0 0 6px" }}>
+              Transactions
+            </p>
+            <div className="chips">
+              <span className={result.txAdded > 0 ? "chip ok" : "chip"}>
+                {num(result.txAdded)} added
+              </span>
+              {result.txSkippedExisting > 0 && (
+                <span className="chip">
+                  {num(result.txSkippedExisting)} skipped: already saved
+                </span>
+              )}
+              {result.txSkippedUnconfirmed > 0 && (
+                <span className="chip warn">
+                  {num(result.txSkippedUnconfirmed)} skipped: zero or
+                  high-value, not confirmed
+                </span>
+              )}
+              {result.txSkippedLookAlike > 0 && (
+                <span className="chip warn">
+                  {num(result.txSkippedLookAlike)} skipped: look-alike account
+                </span>
               )}
             </div>
-          )}
-        </>
-      )}
+            <p className="muted" style={{ margin: "12px 0 6px" }}>
+              Accounts
+            </p>
+            <div className="chips">
+              <span className={result.accountsAdded > 0 ? "chip ok" : "chip"}>
+                {num(result.accountsAdded)} added
+              </span>
+              <span className="chip">
+                {num(result.accountsUpdated)} updated
+              </span>
+              {result.accountsPromoted > 0 && (
+                <span className="chip">
+                  {num(result.accountsPromoted)} moved to {masterName}
+                </span>
+              )}
+            </div>
+            <p className="muted" style={{ marginTop: 12 }}>
+              Made a mistake? Use “Undo last import” on the Transactions
+              toolbar.
+            </p>
+          </div>
+        )}
+        {err && <p className="error">{err}</p>}
+      </Modal>
 
-      {step === "done" && result && (
-        <div className="card">
-          <h3>Import finished</h3>
-          <p className="muted" style={{ margin: "0 0 6px" }}>
-            Transactions
+      {repeat?.alreadyImported && (
+        <AskDialog
+          title="Import this file again?"
+          confirmLabel="Continue anyway"
+          onResult={(ok) => {
+            const i = repeat;
+            setRepeat(null);
+            if (ok && i) proceed(i);
+            else {
+              window.api.txImport.cancel();
+              setInfo(null);
+              setAn(null);
+              setStep("pick");
+            }
+          }}
+        >
+          <p>
+            This data was already imported on{" "}
+            <b>{new Date(repeat.alreadyImported.on).toLocaleString("en-IN")}</b>
+            {repeat.alreadyImported.file !== repeat.source
+              ? ` (as ${repeat.alreadyImported.file})`
+              : ""}
+            .
           </p>
-          <div className="chips">
-            <span className={result.txAdded > 0 ? "chip ok" : "chip"}>
-              {num(result.txAdded)} added
-            </span>
-            {result.txSkippedExisting > 0 && (
-              <span className="chip">
-                {num(result.txSkippedExisting)} skipped: already saved
-              </span>
-            )}
-            {result.txSkippedUnconfirmed > 0 && (
-              <span className="chip warn">
-                {num(result.txSkippedUnconfirmed)} skipped: zero or high-value,
-                not confirmed
-              </span>
-            )}
-            {result.txSkippedLookAlike > 0 && (
-              <span className="chip warn">
-                {num(result.txSkippedLookAlike)} skipped: look-alike account
-              </span>
-            )}
-          </div>
-          <p className="muted" style={{ margin: "12px 0 6px" }}>
-            Accounts
-          </p>
-          <div className="chips">
-            <span className={result.accountsAdded > 0 ? "chip ok" : "chip"}>
-              {num(result.accountsAdded)} added
-            </span>
-            <span className="chip">{num(result.accountsUpdated)} updated</span>
-            {result.accountsPromoted > 0 && (
-              <span className="chip">
-                {num(result.accountsPromoted)} moved to {masterName}
-              </span>
-            )}
-          </div>
-          <p className="muted" style={{ marginTop: 12 }}>
-            Made a mistake? Use “Undo last import” on the Transactions toolbar.
-          </p>
-        </div>
+          <p>Continuing only adds transactions that are not already saved.</p>
+        </AskDialog>
       )}
-      {err && <p className="error">{err}</p>}
-    </Modal>
+    </>
   );
 }

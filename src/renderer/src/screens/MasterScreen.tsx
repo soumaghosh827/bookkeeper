@@ -9,6 +9,7 @@ import {
 import DataGrid, { type GridCol } from "@/components/DataGrid";
 import NameDialog from "@/components/NameDialog";
 import Icon from "@/components/Icon";
+import UndoImportButton from "@/components/UndoImportButton";
 import ImportPanel from "./ImportPanel";
 import { Toast, useToast } from "@/components/Toast";
 import { useConfirmFlow } from "@/lib/useConfirmFlow";
@@ -36,11 +37,15 @@ export default function MasterScreen({
   title,
   refreshKey,
   onChanged,
+  onTxChanged,
+  undoKey,
 }: {
   labels: Labels;
   title: string;
   refreshKey: number;
   onChanged: () => void;
+  onTxChanged: () => void;
+  undoKey: number;
 }) {
   const [mode, setMode] = useState<"grid" | "import">("grid");
   const [oneOff, setOneOff] = useState(false);
@@ -193,6 +198,14 @@ export default function MasterScreen({
           />{" "}
           Show one-off accounts
         </label>
+        <UndoImportButton
+          refreshKey={undoKey}
+          accountsName={title}
+          onUndone={() => {
+            onChanged();
+            onTxChanged();
+          }}
+        />
         <button className="primary" onClick={() => setMode("import")}>
           Import / Paste…
         </button>

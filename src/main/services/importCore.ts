@@ -12,6 +12,7 @@ import {
   type AccField,
   type SeenMap,
 } from "./accountConflicts";
+import { createHash } from "crypto";
 
 /** "A/C No." -> "acno" */
 export const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -441,4 +442,36 @@ export function twinChecker(index: AccountIndex) {
     if (!earlierNo) earlier.set(k, accountNo);
     return stored || earlierNo ? { stored, earlierNo } : null;
   };
+}
+
+// ---------- file fingerprint (both imports) ----------
+/** Same data rows give the same fingerprint, whatever the spacing, trailing empty cells or row order. */
+export function fingerprintRows(rows: string[][]): string {
+  const lines: string[] = [];
+  for (const r of rows) {
+    const cells = r.map((c) => clean(c, 10_000));
+    while (cells.length && cells[cells.length - 1] === "") cells.pop();
+    if (cells.length) lines.push(cells.join("\u001f"));
+  }
+  lines.sort();
+  return createHash("sha256").update(lines.join("\n")).digest("hex");
+}
+
+export interface PriorImport {
+  on: string; // ISO time of the earlier import
+  file: string;
+}
+
+/** The latest import of this kind with the same fingerprint that has not been undone, or null. */
+export function findPriorImport(
+  db: DB,
+  kind: "tx" | "master",
+  hash: string,
+): PriorImport | null {
+  const r = db
+    .prepare(
+      "SELECT created_at, file_name FROM import_batches WHERE kind = ? AND file_hash = ? AND undone_at IS NULL ORDER BY id DESC LIMIT 1",
+    )
+    .get(kind, hash) as { created_at: string; file_name: string } | undefined;
+  return r ? { on: r.created_at, file: r.file_name } : null;
 }

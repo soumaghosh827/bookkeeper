@@ -1,0 +1,27 @@
+# Build outputs and caches
+out/
+dist/
+release/
+*.tsbuildinfo
+
+# Lockfiles (saves massive amounts of tokens)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Sensitive data and databases
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+keystore.json
+*.keystore.json
+.env
+.env.*
+*.xlsx
+*.xls
+*.csv
+
+# Logs and output dump
+*.log
+codebase.md

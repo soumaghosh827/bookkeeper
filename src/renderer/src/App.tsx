@@ -175,6 +175,8 @@ export default function App() {
             title={masterName}
             refreshKey={masterV}
             onChanged={bumpMaster}
+            onTxChanged={bumpTx}
+            undoKey={both}
           />
         </section>
         <section className="screen" hidden={tab !== "transactions"}>

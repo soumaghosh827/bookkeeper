@@ -8,6 +8,7 @@ import * as prefs from "./services/prefs";
 import * as labels from "./services/labels";
 import * as acc from "./services/accounts";
 import * as imp from "./services/masterImport";
+import * as batches from "./services/importBatches";
 import * as txi from "./services/txImport";
 import * as tx from "./services/transactions";
 import * as cc from "./services/customColumns";
@@ -160,9 +161,9 @@ export function registerIpc() {
     run(() => ({ ok: true, data: txi.commit(db(), o) })),
   );
   H("tximp:cancel", () => txi.clearSession());
-  H("tximp:undoInfo", () => txi.undoInfo(db()));
+  H("tximp:undoInfo", () => batches.undoInfo(db()));
   H("tximp:undoLast", () =>
-    run(() => ({ ok: true, data: txi.undoLastImport(db()) })),
+    run(() => ({ ok: true, data: batches.undoLastImport(db()) })),
   );
 
   // ---- transactions ----

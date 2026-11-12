@@ -120,7 +120,7 @@ ALTER TABLE templates ADD COLUMN output_plan TEXT NOT NULL DEFAULT '{}';
   {
     version: 3,
     sql: `
--- One row per Excel import, so the whole import can be undone.
+-- One row per import(Transactions and Accounts), so the whole import can be undone.
 CREATE TABLE import_batches (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at      TEXT NOT NULL,
@@ -128,12 +128,15 @@ CREATE TABLE import_batches (
   acc_count       INTEGER NOT NULL DEFAULT 0,
   tx_count        INTEGER NOT NULL DEFAULT 0,
   account_changes TEXT NOT NULL DEFAULT '[]', -- previous values of master accounts this import updated (used by undo)
-  undone_at       TEXT
+  undone_at       TEXT,
+  kind            TEXT NOT NULL DEFAULT 'tx' CHECK (kind IN ('tx', 'master')),
+  file_hash       TEXT NOT NULL DEFAULT ''
 );
 ALTER TABLE accounts     ADD COLUMN batch_id INTEGER REFERENCES import_batches(id);
 ALTER TABLE transactions ADD COLUMN batch_id INTEGER REFERENCES import_batches(id);
 CREATE INDEX idx_acc_batch ON accounts(batch_id);
 CREATE INDEX idx_tx_batch  ON transactions(batch_id);
+CREATE INDEX idx_batch_hash ON import_batches(file_hash);
 `,
   },
 ];

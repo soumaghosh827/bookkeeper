@@ -26,11 +26,15 @@ import {
   sanitizeChoices,
   applyAccountUpdate,
 } from "./accountConflicts";
+import { audit } from "./audit";
+import type { AccRow, AccountChange } from "./importBatches";
 import {
   DAMAGED_MSG,
   ACCOUNT_SYNONYMS,
   autoMapHeaders,
   detectHeader,
+  fingerprintRows,
+  findPriorImport,
   openWorkbook,
   readWorksheet,
   listSheets,
@@ -75,6 +79,7 @@ const POSITIONAL: AccountKey[] = [
 // The parsed input is held in main-process memory between steps (never sent whole to the UI).
 let session: {
   source: string;
+  hash: string;
   headers: string[];
   rows: { n: number; cells: string[]; risky: number[] }[]; // risky = columns Excel has already damaged
 } | null = null;
@@ -166,11 +171,13 @@ function setSession(
         ? "Need a header row and at least one data row"
         : "Nothing to import",
     );
-  session = { source, headers, rows };
+  const hash = fingerprintRows(rows.map((r) => r.cells));
+  session = { source, hash, headers, rows };
   return {
     source,
     headers,
     rowCount: rows.length,
+    alreadyImported: findPriorImport(db, "master", hash),
     ...autoMap(db, headers, !hasHeader),
   };
 }
@@ -388,6 +395,8 @@ export function commitPlan(
 ): MasterCommitResult {
   const { groups, invalid, index } = groupRows(db, mapping);
   const headers = session!.headers;
+  const source = session!.source;
+  const hash = session!.hash;
   const now = new Date().toISOString();
   const rule = opts.existingRule === "update" ? "update" : "keep";
   const dec = opts.decisions ?? {};
@@ -399,6 +408,17 @@ export function commitPlan(
   const choices = sanitizeChoices(opts.fieldChoices, keys);
 
   const writer = accountWriter(db);
+  const insBatch = db.prepare(
+    "INSERT INTO import_batches (created_at, file_name, kind, file_hash) VALUES (?, ?, 'master', ?)",
+  );
+  const getAcc = db.prepare(
+    "SELECT id, payee, bank, branch, ifsc, remarks, in_master, extra, updated_at FROM accounts WHERE id = ?",
+  );
+  const changes: AccountChange[] = [];
+  let batch: number | null = null; // created on the first write, so an import that changes nothing leaves no batch
+  let promoted = 0;
+  const ensureBatch = () =>
+    (batch ??= Number(insBatch.run(now, source, hash).lastInsertRowid));
   const addCustom = db.prepare(
     "INSERT OR IGNORE INTO custom_fields(key, label, scope, position) VALUES (?, ?, 'account', (SELECT COALESCE(MAX(position), 0) + 1 FROM custom_fields))",
   );
@@ -430,7 +450,7 @@ export function commitPlan(
           in_master: 1,
           extra: JSON.stringify(g.extra),
           now,
-          batch: null, // identifies the import batch
+          batch: ensureBatch(),
           ...pick,
         });
         added++;
@@ -455,8 +475,23 @@ export function commitPlan(
         remarks: cur.remarks,
         extra: cur.extra,
       };
+      const { id: _id, ...prev } = getAcc.get(cur.id) as AccRow; // old values, so undo can restore them
+      ensureBatch();
+      changes.push({ id: cur.id, at: now, prev });
       writer.update({ ...base, in_master: 1, id: cur.id, now });
       updated++;
+      if (promote) promoted++;
+    }
+    if (batch !== null) {
+      db.prepare(
+        "UPDATE import_batches SET acc_count = ?, account_changes = ? WHERE id = ?",
+      ).run(added, JSON.stringify(changes), batch);
+      audit(db, "import_batches", String(batch), "create", {
+        file: [null, source],
+        accounts_added: [null, added],
+        accounts_updated: [null, updated],
+        accounts_promoted: [null, promoted],
+      });
     }
   })();
   session = null;

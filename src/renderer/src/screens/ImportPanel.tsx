@@ -10,6 +10,7 @@ import {
 import AccountConflictCard from "../components/AccountConflictCard";
 import MappingTable from "../components/MappingTable";
 import SheetPicker from "../components/SheetPicker";
+import AskDialog from "../components/AskDialog";
 import { useAccountChoices } from "../lib/useAccountChoices";
 
 type Step = "source" | "map" | "done";
@@ -33,6 +34,7 @@ export default function ImportPanel({
   const [rule, setRule] = useState<"keep" | "update">("keep");
   const [simRule, setSimRule] = useState<"add" | "skip">("skip");
   const [busy, setBusy] = useState(false);
+  const [repeat, setRepeat] = useState<ImportFileInfo | null>(null); // a file that was imported before, waiting for the person's choice
   const [err, setErr] = useState("");
   const [result, setResult] = useState<{
     added: number;
@@ -50,12 +52,19 @@ export default function ImportPanel({
     reset: resetChoices,
   } = useAccountChoices();
 
-  const loaded = (i: ImportFileInfo) => {
+  const proceed = (i: ImportFileInfo) => {
     setInfo(i);
     setMapping(i.mapping);
     setAn(null);
     setStep("map");
   };
+
+  const loaded = (i: ImportFileInfo) => {
+    if (i.alreadyImported)
+      setRepeat(i); // ask first; the mapping step opens only after "Continue anyway"
+    else proceed(i);
+  };
+
   const guard = async (fn: () => Promise<void>) => {
     setErr("");
     setBusy(true);
@@ -422,6 +431,34 @@ export default function ImportPanel({
           </p>
         </div>
       )}
+
+      {repeat?.alreadyImported && (
+        <AskDialog
+          title="Import this file again?"
+          confirmLabel="Continue anyway"
+          onResult={(ok) => {
+            const i = repeat;
+            setRepeat(null);
+            if (ok && i) proceed(i);
+            else {
+              setInfo(null);
+              setAn(null);
+              setStep("source");
+            }
+          }}
+        >
+          <p>
+            This data was already imported on{" "}
+            <b>{new Date(repeat.alreadyImported.on).toLocaleString("en-IN")}</b>
+            {repeat.alreadyImported.file !== repeat.source
+              ? ` (as ${repeat.alreadyImported.file})`
+              : ""}
+            .
+          </p>
+          <p>Continuing only adds or changes what is different.</p>
+        </AskDialog>
+      )}
+
       {err && <p className="error">{err}</p>}
     </div>
   );

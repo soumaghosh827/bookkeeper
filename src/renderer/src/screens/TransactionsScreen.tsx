@@ -6,7 +6,6 @@ import {
   type Labels,
   type TxChanges,
   type TxRow,
-  type TxUndoInfo,
 } from "@shared/types";
 import { canDelete } from "@shared/rules";
 import { fmtDate, formatPaise, parseAmount, parseDate } from "@shared/format";
@@ -16,6 +15,7 @@ import AskDialog from "@/components/AskDialog";
 import CorrectDialog from "@/components/CorrectDialog";
 import HistoryDialog from "@/components/HistoryDialog";
 import Icon from "@/components/Icon";
+import UndoImportButton from "@/components/UndoImportButton";
 import { Toast, useToast } from "@/components/Toast";
 import { useConfirmFlow } from "@/lib/useConfirmFlow";
 import { useGridData } from "@/lib/useGridData";
@@ -68,8 +68,6 @@ export default function TransactionsScreen({
   const [fixRow, setFixRow] = useState<TxRow | null>(null);
   const [histRow, setHistRow] = useState<TxRow | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [undo, setUndo] = useState<TxUndoInfo | null>(null);
-  const [undoOpen, setUndoOpen] = useState(false);
   const { toast, show, hide } = useToast();
   const { withConfirm, element } = useConfirmFlow();
   const g = useGridData((q) => window.api.transactions.list(q), {}, refreshKey);
@@ -80,14 +78,6 @@ export default function TransactionsScreen({
   useEffect(() => {
     loadCustom();
   }, [refreshKey]);
-
-  const loadUndo = () => {
-    if (!picker) window.api.txImport.undoInfo().then(setUndo);
-  };
-
-  useEffect(() => {
-    loadUndo();
-  }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     window.api.prefs.get("tx_columns").then((s) => {
@@ -225,32 +215,6 @@ export default function TransactionsScreen({
       show(r.error ?? "Export failed", { tone: "error" });
   }
 
-  function clickUndo() {
-    if (!undo) return;
-    if (!undo.canUndo)
-      return show(
-        `${undo.inReports} imported transactions are already in saved reports, so this import can no longer be undone`,
-        { tone: "error" },
-      );
-    setUndoOpen(true);
-  }
-
-  async function doUndo() {
-    setUndoOpen(false);
-    const r = await window.api.txImport.undoLast();
-    if (!r.ok) return show(r.error ?? "Could not undo", { tone: "error" });
-    const d = r.data!;
-    show(
-      `Import undone: ${d.transactions.toLocaleString("en-IN")} transactions removed` +
-        (d.revertSkipped
-          ? ` · ${d.revertSkipped} master edits kept because you changed them since`
-          : ""),
-    );
-    onChanged?.();
-    onMasterChanged?.();
-    loadUndo();
-  }
-
   const addSelected = async () => {
     await onAddToList([...selected]);
     setSelected(new Set());
@@ -315,16 +279,17 @@ export default function TransactionsScreen({
         </div>
 
         {!picker && (
-          <button onClick={() => setImportOpen(true)}>Import Excel…</button>
+          <button onClick={() => setImportOpen(true)}>Import Excel</button>
         )}
-        {!picker && undo && (
-          <button
-            className="ghost"
-            onClick={clickUndo}
-            title={`Imported ${new Date(undo.created_at).toLocaleString("en-IN")} from ${undo.file_name}`}
-          >
-            Undo last import
-          </button>
+        {!picker && (
+          <UndoImportButton
+            refreshKey={refreshKey}
+            accountsName={masterName ?? "Accounts"}
+            onUndone={() => {
+              onChanged?.();
+              onMasterChanged?.();
+            }}
+          />
         )}
 
         {!picker && (
@@ -474,38 +439,9 @@ export default function TransactionsScreen({
             if (changed) {
               onChanged?.();
               onMasterChanged?.();
-              loadUndo();
             }
           }}
         />
-      )}
-
-      {undoOpen && undo && (
-        <AskDialog
-          title="Undo the last import?"
-          danger
-          confirmLabel="Undo import"
-          onResult={(ok) => (ok ? doUndo() : setUndoOpen(false))}
-        >
-          <p>
-            <strong>{undo.file_name}</strong> · imported{" "}
-            {new Date(undo.created_at).toLocaleString("en-IN")}
-          </p>
-          <p>
-            This deletes <b>{undo.transactions.toLocaleString("en-IN")}</b>{" "}
-            imported transactions
-            {undo.newAccounts
-              ? ` and the ${undo.newAccounts.toLocaleString("en-IN")} accounts it created`
-              : ""}
-            , and restores any master details the import changed.
-          </p>
-          {undo.edited > 0 && (
-            <div className="notice">
-              {undo.edited} of these transactions were edited after the import
-              (for example a UTR was added). Those edits will be lost too.
-            </div>
-          )}
-        </AskDialog>
       )}
 
       {element}

@@ -205,6 +205,7 @@ export interface ImportFileInfo {
   rowCount: number;
   mapping: ColumnMapping;
   customFields: CustomColumn[];
+  alreadyImported: { on: string; file: string } | null; // the same data was imported before (and not undone)
 }
 export interface ImportProblem {
   row: number;
@@ -263,6 +264,7 @@ export interface TxImportFileInfo {
   rowCount: number;
   headerRow: number; // Excel row the column names were found in
   mapping: ColumnMapping;
+  alreadyImported: { on: string; file: string } | null; // the same data was imported before (and not undone)
 }
 export interface TxImportRejected {
   row: number;
@@ -329,6 +331,7 @@ export interface TxImportResult {
 }
 export interface TxUndoInfo {
   id: number;
+  kind: "tx" | "master";
   created_at: string;
   file_name: string;
   transactions: number;

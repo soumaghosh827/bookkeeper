@@ -2,7 +2,8 @@ import { ipcMain, dialog, BrowserWindow } from "electron";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { vault } from "./vault";
-import type { Result } from "@shared/types";
+import { units, unitDisplayName, type Unit } from "./units";
+import type { Result, UnitInfo } from "@shared/types";
 import { FieldError } from "./services/errors";
 import * as prefs from "./services/prefs";
 import * as labels from "./services/labels";
@@ -49,31 +50,43 @@ const saveDlg = (o: Electron.SaveDialogOptions) => {
   return w ? dialog.showSaveDialog(w, o) : dialog.showSaveDialog(o);
 };
 const db = () => vault.handle;
+const unitInfo = (u: Unit): UnitInfo => ({
+  id: u.id,
+  name: u.name,
+  label: u.label,
+  display: unitDisplayName(u),
+});
 const H = ipcMain.handle.bind(ipcMain);
 const CANCELLED = { ok: false as const, error: "Cancelled" };
 
 export function registerIpc() {
   // ---- vault ----
   H("vault:state", () => vault.state());
-  H("vault:create", (_e, password: string) =>
+  H("vault:create", (_e, password: string, unitName: string) =>
     typeof password !== "string" || password.length < 8
       ? { ok: false, error: "Password must be at least 8 characters" }
       : run(() => ({
           ok: true,
-          data: { recoveryKey: vault.create(password) },
+          data: { recoveryKey: vault.create(password, String(unitName)) },
         })),
   );
-  H("vault:unlock", (_e, password: string) =>
-    vault.unlock(String(password))
-      ? { ok: true }
-      : { ok: false, error: "Incorrect password" },
-  );
-  H("vault:unlockWithRecoveryKey", (_e, key: string, pw: string) =>
-    String(pw).length < 8
-      ? { ok: false, error: "Password must be at least 8 characters" }
-      : vault.unlockWithRecoveryKey(String(key), String(pw))
+  H("vault:unlock", (_e, unitId: string, password: string) =>
+    run(() =>
+      vault.unlock(String(unitId), String(password))
         ? { ok: true }
-        : { ok: false, error: "Invalid recovery key" },
+        : { ok: false, error: "Incorrect password" },
+    ),
+  );
+  H(
+    "vault:unlockWithRecoveryKey",
+    (_e, unitId: string, key: string, pw: string) =>
+      String(pw).length < 8
+        ? { ok: false, error: "Password must be at least 8 characters" }
+        : run(() =>
+            vault.unlockWithRecoveryKey(String(unitId), String(key), String(pw))
+              ? { ok: true }
+              : { ok: false, error: "Invalid recovery key" },
+          ),
   );
   H("vault:lock", () => {
     // never keep a loaded import in memory after locking
@@ -81,6 +94,50 @@ export function registerIpc() {
     txi.clearSession();
     return vault.lock();
   });
+
+  // ---- units ----
+  H("unit:list", () => ({
+    units: units.list().map(unitInfo),
+    lastUsedId: units.lastUsed()?.id ?? null,
+  }));
+  H("unit:current", () => {
+    if (vault.state() !== "unlocked") return null;
+    const u = units.get(vault.currentUnit.id);
+    return u ? unitInfo(u) : null;
+  });
+  H("unit:create", (_e, name: string, label?: string, copyFrom?: string) =>
+    run(() => ({
+      ok: true,
+      data: unitInfo(
+        vault.createUnit(
+          String(name),
+          String(label ?? ""),
+          copyFrom ? String(copyFrom) : undefined,
+        ),
+      ),
+    })),
+  );
+  H("unit:rename", (_e, id: string, name: string) =>
+    run(() => {
+      db(); // must be unlocked
+      return { ok: true, data: unitInfo(units.rename(String(id), name)) };
+    }),
+  );
+  H("unit:summary", (_e, id: string) =>
+    run(() => ({ ok: true, data: vault.unitSummary(String(id)) })),
+  );
+  H("unit:delete", (_e, id: string, password: string) =>
+    run(() => {
+      vault.deleteUnit(String(id), String(password));
+      return { ok: true };
+    }),
+  );
+  H("unit:label", (_e, id: string, label: string) =>
+    run(() => {
+      db();
+      return { ok: true, data: unitInfo(units.setLabel(String(id), label)) };
+    }),
+  );
 
   // ---- settings ----
   H("labels:get", () => labels.getLabels(db()));

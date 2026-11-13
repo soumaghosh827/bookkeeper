@@ -58,6 +58,16 @@
 .nav .spacer {
   flex: 1;
 }
+.nav-unit {
+  align-self: center;
+  max-width: 280px;
+  margin-right: var(--sp-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: var(--on-ink);
+}
 .nav .end {
   align-self: center;
   height: calc(var(--control-h) - 2px);

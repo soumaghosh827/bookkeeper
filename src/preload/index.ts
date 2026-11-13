@@ -6,10 +6,20 @@ const inv = (ch: string, ...a: unknown[]) => ipcRenderer.invoke(ch, ...a);
 const api: BookkeeperApi = {
   vault: {
     state: () => inv("vault:state"),
-    create: (p) => inv("vault:create", p),
-    unlock: (p) => inv("vault:unlock", p),
-    unlockWithRecoveryKey: (k, p) => inv("vault:unlockWithRecoveryKey", k, p),
+    create: (p, n) => inv("vault:create", p, n),
+    unlock: (u, p) => inv("vault:unlock", u, p),
+    unlockWithRecoveryKey: (u, k, p) =>
+      inv("vault:unlockWithRecoveryKey", u, k, p),
     lock: () => inv("vault:lock"),
+  },
+  units: {
+    list: () => inv("unit:list"),
+    current: () => inv("unit:current"),
+    create: (n, l, c) => inv("unit:create", n, l, c),
+    rename: (id, n) => inv("unit:rename", id, n),
+    setLabel: (id, l) => inv("unit:label", id, l),
+    summary: (id) => inv("unit:summary", id),
+    remove: (id, p) => inv("unit:delete", id, p),
   },
   labels: {
     get: () => inv("labels:get"),

@@ -83,6 +83,14 @@ export interface CustomColumn {
 
 export type AppState = "no-vault" | "locked" | "unlocked";
 
+export interface UnitInfo {
+  id: string;
+  name: string;
+  label: string;
+  /** "Unit 1" or "Unit 1 - Label" */
+  display: string;
+}
+
 export type ConfirmKind =
   | "zero"
   | "duplicate"
@@ -570,13 +578,38 @@ export type PrefKey = (typeof PREF_KEYS)[number];
 export interface BookkeeperApi {
   vault: {
     state(): Promise<AppState>;
-    create(password: string): Promise<Result<{ recoveryKey: string }>>;
-    unlock(password: string): Promise<Result>;
+    create(
+      password: string,
+      unitName: string,
+    ): Promise<Result<{ recoveryKey: string }>>;
+    unlock(unitId: string, password: string): Promise<Result>;
     unlockWithRecoveryKey(
+      unitId: string,
       recoveryKey: string,
       newPassword: string,
     ): Promise<Result>;
     lock(): Promise<void>;
+  };
+  units: {
+    /** Readable before unlock (login picker). */
+    list(): Promise<{ units: UnitInfo[]; lastUsedId: string | null }>;
+    /** The open unit, or null while locked. */
+    current(): Promise<UnitInfo | null>;
+    create(
+      name: string,
+      label?: string,
+      copyTemplatesFrom?: string,
+    ): Promise<Result<UnitInfo>>;
+    rename(id: string, name: string): Promise<Result<UnitInfo>>;
+    setLabel(id: string, label: string): Promise<Result<UnitInfo>>;
+    /** What a unit holds, for the delete confirmation. */
+    summary(
+      id: string,
+    ): Promise<
+      Result<{ accounts: number; transactions: number; reports: number }>
+    >;
+    /** Permanent. Needs the password; the open unit cannot be deleted. */
+    remove(id: string, password: string): Promise<Result>;
   };
   labels: {
     get(): Promise<Labels>;

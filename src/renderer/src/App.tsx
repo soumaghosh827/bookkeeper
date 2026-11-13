@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_LABELS, type AppState, type Labels } from "@shared/types";
+import {
+  DEFAULT_LABELS,
+  type AppState,
+  type Labels,
+  type UnitInfo,
+} from "@shared/types";
 import AuthScreen from "./screens/AuthScreen";
 import EntryScreen from "./screens/EntryScreen";
 import MasterScreen from "./screens/MasterScreen";
@@ -22,6 +27,7 @@ export default function App() {
   const [theme, setTheme] = useState("light");
   const [density, setDensity] = useState("comfortable");
   const [count, setCount] = useState(0);
+  const [unit, setUnit] = useState<UnitInfo | null>(null); // the open unit
   const [masterV, setMasterV] = useState(0); // bumps when master data changes -> other screens re-read
   const [txV, setTxV] = useState(0); // bumps when transactions / the report list change
   const [renameMaster, setRenameMaster] = useState(false);
@@ -52,14 +58,20 @@ export default function App() {
       window.api.prefs.get("theme"),
       window.api.prefs.get("density"),
     ]);
-    if (mn) setMasterName(mn);
+    setMasterName(mn || "Master"); // per unit: a unit without a custom name shows the default
     setTheme(th ?? "light");
     setDensity(de ?? "comfortable");
     applyTheme(th, de);
   }, []);
+  const loadUnit = useCallback(async () => {
+    setUnit(await window.api.units.current());
+  }, []);
   useEffect(() => {
-    if (state === "unlocked") loadSettings();
-  }, [state, loadSettings]);
+    if (state === "unlocked") {
+      loadSettings();
+      loadUnit();
+    }
+  }, [state, loadSettings, loadUnit]);
 
   // Ctrl+1..5 switches tabs
   useEffect(() => {
@@ -102,6 +114,9 @@ export default function App() {
     setState("locked");
     setTab("entry");
     setCount(0);
+    setUnit(null);
+    setTplDirty(false);
+    setPendingTab(null);
   };
 
   if (state === null) return null;
@@ -151,6 +166,11 @@ export default function App() {
           </button>
         ))}
         <span className="spacer" />
+        {unit && (
+          <span className="nav-unit" title={unit.display}>
+            {unit.display}
+          </span>
+        )}
         <button className="end" onClick={lock}>
           <Icon name="lock" />
           Lock
@@ -206,6 +226,7 @@ export default function App() {
               }}
               onMasterName={changeMasterName}
               onTheme={changeTheme}
+              onUnitChanged={loadUnit}
               onColumnsChanged={() => {
                 bumpMaster();
                 bumpTx();

@@ -8,7 +8,11 @@ asarUnpack:
   - node_modules/better-sqlite3-multiple-ciphers/**
 win:
   target: nsis
+publish:
+  provider: github
+  owner: soumaghosh827
+  repo: bookkeeper
+  releaseType: release
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-

@@ -4,9 +4,12 @@ import {
   type CustomColumn,
   type Labels,
   type Scope,
+  type UnitInfo,
 } from "@shared/types";
 import { DENSITIES, THEMES } from "@/lib/theme";
 import NameDialog from "@/components/NameDialog";
+import Modal from "@/components/Modal";
+import AskDialog from "@/components/AskDialog";
 import Icon from "@/components/Icon";
 import { Toast, useToast } from "@/components/Toast";
 
@@ -108,6 +111,255 @@ function Columns({
   );
 }
 
+function NewUnitDialog({
+  units,
+  onClose,
+  onCreate,
+}: {
+  units: UnitInfo[];
+  onClose: () => void;
+  onCreate: (name: string, copyFrom: string) => Promise<string | null>;
+}) {
+  const [name, setName] = useState(`Unit ${units.length + 1}`);
+  const [from, setFrom] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const go = async () => {
+    if (busy) return;
+    setBusy(true);
+    const e = await onCreate(name, from);
+    setBusy(false);
+    e ? setErr(e) : onClose();
+  };
+  return (
+    <Modal
+      title="New unit"
+      onClose={onClose}
+      actions={
+        <>
+          <button onClick={onClose}>Cancel</button>
+          <button className="primary" disabled={busy} onClick={go}>
+            Create
+          </button>
+        </>
+      }
+    >
+      <div className="field">
+        <label>Unit name</label>
+        <input
+          autoFocus
+          maxLength={40}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && go()}
+        />
+      </div>
+      <div className="field">
+        <label>Copy templates from</label>
+        <select value={from} onChange={(e) => setFrom(e.target.value)}>
+          <option value="">Nothing (start empty)</option>
+          {units.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.display}
+            </option>
+          ))}
+        </select>
+      </div>
+      {err && <p className="error">{err}</p>}
+    </Modal>
+  );
+}
+
+function DeleteUnitDialog({
+  unit,
+  recordsName,
+  onClose,
+  onDone,
+}: {
+  unit: UnitInfo;
+  recordsName: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [sum, setSum] = useState<{
+    accounts: number;
+    transactions: number;
+    reports: number;
+  } | null>(null);
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    window.api.units
+      .summary(unit.id)
+      .then((r) => (r.ok ? setSum(r.data!) : setErr(r.error ?? "Failed")));
+  }, [unit.id]);
+  const go = async () => {
+    if (busy || !pw) return;
+    setBusy(true);
+    setErr("");
+    const r = await window.api.units.remove(unit.id, pw);
+    setBusy(false);
+    onDone(); // refresh the list either way
+    if (r.ok) onClose();
+    else setErr(r.error ?? "Failed");
+  };
+  return (
+    <AskDialog
+      title="Delete unit"
+      danger
+      confirmLabel="Delete unit"
+      confirmDisabled={busy || !pw || !sum}
+      onResult={(ok) => (ok ? go() : onClose())}
+    >
+      <p>
+        <strong>{unit.display}</strong>
+      </p>
+      {sum && (
+        <p>
+          It holds {sum.accounts} {recordsName} records, {sum.transactions}{" "}
+          transactions and {sum.reports} reports.
+        </p>
+      )}
+      <div className="notice" style={{ marginBottom: 8 }}>
+        This permanently deletes all data in this unit. It cannot be undone and
+        no backup is made automatically.
+      </div>
+      <div className="field">
+        <label>Enter your password to confirm</label>
+        <input
+          type="password"
+          autoFocus
+          value={pw}
+          onChange={(e) => setPw(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && go()}
+        />
+      </div>
+      {err && <p className="error">{err}</p>}
+    </AskDialog>
+  );
+}
+
+function Units({
+  onChanged,
+  masterName,
+}: {
+  onChanged: () => void;
+  masterName: string;
+}) {
+  const [list, setList] = useState<UnitInfo[]>([]);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [dlg, setDlg] = useState<
+    | { kind: "new" }
+    | { kind: "rename" | "label" | "delete"; unit: UnitInfo }
+    | null
+  >(null);
+  const load = useCallback(async () => {
+    const [l, c] = await Promise.all([
+      window.api.units.list(),
+      window.api.units.current(),
+    ]);
+    setList(l.units);
+    setOpenId(c?.id ?? null);
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const done = async () => {
+    await load();
+    onChanged(); // refresh the header
+  };
+  return (
+    <div className="card">
+      <h3>Units</h3>
+      <p className="muted">
+        Each unit keeps its own data, templates and names. All units use the
+        same password. To switch, lock and pick another unit.
+      </p>
+      {list.map((u) => (
+        <div key={u.id} className="colrow">
+          <span className="grow">
+            {u.display}
+            {u.id === openId ? " (open)" : ""}
+          </span>
+          <button
+            className="small"
+            onClick={() => setDlg({ kind: "rename", unit: u })}
+          >
+            Rename
+          </button>
+          <button
+            className="small"
+            onClick={() => setDlg({ kind: "label", unit: u })}
+          >
+            {u.label ? "Edit label" : "Add label"}
+          </button>
+          <button
+            className="small"
+            disabled={u.id === openId}
+            title={
+              u.id === openId
+                ? "Open another unit to delete this one"
+                : undefined
+            }
+            onClick={() => setDlg({ kind: "delete", unit: u })}
+          >
+            Delete
+          </button>
+        </div>
+      ))}
+      <button style={{ marginTop: 8 }} onClick={() => setDlg({ kind: "new" })}>
+        Add unit…
+      </button>
+      {dlg?.kind === "new" && (
+        <NewUnitDialog
+          units={list}
+          onClose={() => setDlg(null)}
+          onCreate={async (n, from) => {
+            const r = await window.api.units.create(n, "", from || undefined);
+            await load(); // the unit may exist even if copying failed
+            return r.ok ? null : (r.error ?? "Failed");
+          }}
+        />
+      )}
+      {dlg?.kind === "rename" && (
+        <NameDialog
+          title="Rename unit"
+          initial={dlg.unit.name}
+          onClose={() => setDlg(null)}
+          onSubmit={async (n) => {
+            const r = await window.api.units.rename(dlg.unit.id, n);
+            if (!r.ok) return r.error ?? "Failed";
+            await done();
+            return null;
+          }}
+        />
+      )}
+      {dlg?.kind === "delete" && (
+        <DeleteUnitDialog
+          unit={dlg.unit}
+          recordsName={masterName}
+          onClose={() => setDlg(null)}
+          onDone={load}
+        />
+      )}
+      {dlg?.kind === "label" && (
+        <NameDialog
+          title="Unit label (leave empty for none)"
+          initial={dlg.unit.label}
+          onClose={() => setDlg(null)}
+          onSubmit={async (l) => {
+            const r = await window.api.units.setLabel(dlg.unit.id, l);
+            if (!r.ok) return r.error ?? "Failed";
+            await done();
+            return null;
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function SettingsScreen({
   labels,
   masterName,
@@ -117,6 +369,7 @@ export default function SettingsScreen({
   onMasterName,
   onTheme,
   onColumnsChanged,
+  onUnitChanged,
 }: {
   labels: Labels;
   masterName: string;
@@ -126,6 +379,7 @@ export default function SettingsScreen({
   onMasterName: (n: string) => void;
   onTheme: (theme: string, density: string) => void;
   onColumnsChanged: () => void;
+  onUnitChanged: () => void;
 }) {
   const [mname, setMname] = useState(masterName);
   const [backup, setBackup] = useState("");
@@ -243,12 +497,15 @@ export default function SettingsScreen({
           />
         </div>
 
+        <Units onChanged={onUnitChanged} masterName={masterName} />
+
         <div className="card">
           <h3>Backup</h3>
           <p className="muted">
-            Saves an encrypted copy of your data (and its key file) to a place
-            you choose, e.g. a pen drive. Use it to move to a new PC; your
-            recovery key opens it too.
+            Saves an encrypted copy of the open unit's data (and the key file)
+            to a place you choose, e.g. a pen drive. Other units are not
+            included; open each one and back it up separately. Your recovery key
+            opens the backup too.
           </p>
           <button className="primary" onClick={doBackup}>
             Back up now…

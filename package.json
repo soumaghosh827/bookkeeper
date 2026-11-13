@@ -3,6 +3,11 @@
   "productName": "BookKeeper",
   "version": "0.1.0",
   "description": "Offline bulk transaction entry with Excel and Word output",
+  "author": "soumaghosh827",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/soumaghosh827/bookkeeper.git"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev --watch",
@@ -15,6 +20,7 @@
     "@tanstack/react-virtual": "^3.10.0",
     "better-sqlite3-multiple-ciphers": "^11.5.0",
     "docxtemplater": "^3.50.0",
+    "electron-updater": "^6.8.11",
     "exceljs": "^4.4.0",
     "lucide-react": "^1.70.0",
     "pizzip": "^3.1.7",

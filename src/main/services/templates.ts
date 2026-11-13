@@ -94,6 +94,33 @@ export const getTexts = (db: DB, id: number): TemplateText[] =>
       "SELECT key, value FROM template_texts WHERE template_id = ? ORDER BY key",
     )
     .all(id) as TemplateText[];
+/** Copies every template (Word file, saved texts, output plan) from one unit's file into another's. */
+export function copyTemplates(src: DB, dest: DB): number {
+  const rows = src
+    .prepare(
+      "SELECT id, name, description, file, output_plan FROM templates ORDER BY id",
+    )
+    .all() as any[];
+  const textsOf = src.prepare(
+    "SELECT key, value FROM template_texts WHERE template_id = ?",
+  );
+  const insT = dest.prepare(
+    "INSERT INTO templates (name, description, file, output_plan, updated_at) VALUES (?, ?, ?, ?, ?)",
+  );
+  const insX = dest.prepare(
+    "INSERT INTO template_texts (template_id, key, value) VALUES (?, ?, ?)",
+  );
+  const now = new Date().toISOString();
+  dest.transaction(() => {
+    for (const t of rows) {
+      const id = insT.run(t.name, t.description, t.file, t.output_plan, now)
+        .lastInsertRowid as number;
+      for (const x of textsOf.all(t.id) as any[]) insX.run(id, x.key, x.value);
+    }
+  })();
+  return rows.length;
+}
+
 export function setTexts(db: DB, id: number, texts: TemplateText[]): Result {
   const seen = new Set<string>();
   for (const t of texts) {

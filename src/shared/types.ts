@@ -673,6 +673,8 @@ export interface BookkeeperApi {
       templateId: number,
       uids: string[],
       title?: string,
+      refNo?: string, // one reference for the whole report
+      reportDate?: string, // YYYY-MM-DD or dd/mm/yyyy; empty = today
     ): Promise<Result<ReportPrepared>>;
     save(
       record: boolean,

@@ -35,8 +35,7 @@ const blank = (date?: string): Record<string, string> => ({
   account_no: "",
   ifsc: "",
   amount: "",
-  entry_date: date ?? fmtDate(todayIso()),
-  reference_no: "",
+  entry_date: date ?? "", // blank = today (set under More fields)
   utr: "",
   notes: "",
 });
@@ -89,6 +88,8 @@ export default function EntryScreen({
   const [askClear, setAskClear] = useState(false);
   const [delRow, setDelRow] = useState<PreviewRow | null>(null);
   const [fieldDlg, setFieldDlg] = useState(false);
+  const [refNo, setRefNo] = useState(""); // belongs to the report, not to a transaction
+  const [repDate, setRepDate] = useState(fmtDate(todayIso()));
 
   const tplGroups = useMemo(() => {
     const m = new Map<string, Template[]>();
@@ -96,21 +97,6 @@ export default function EntryScreen({
     return [...m.entries()];
   }, [tpls]);
   const tplSel = tpls.find((t) => t.id === tplId);
-
-  const refCheck = useMemo(() => {
-    const distinct = [
-      ...new Set(rows.map((r) => r.reference_no).filter(Boolean)),
-    ];
-    const blank = rows.filter((r) => !r.reference_no).length;
-    const shown =
-      distinct.slice(0, 3).join(", ") + (distinct.length > 3 ? ", …" : "");
-    let note = "";
-    if (distinct.length > 1)
-      note = `${distinct.length} different reference numbers${blank ? `, and ${blank} with none` : ""}. The document will print: ${shown}.`;
-    else if (distinct.length === 1 && blank)
-      note = `${blank} of ${rows.length} have no reference number. The document will show only: ${shown}.`;
-    return { note, none: rows.length > 0 && distinct.length === 0 };
-  }, [rows]);
 
   const refs = useRef<Record<string, HTMLInputElement | null>>({});
   const seq = useRef(0);
@@ -213,9 +199,9 @@ export default function EntryScreen({
     "account_no",
     "ifsc",
     "amount",
-    "entry_date",
-    "reference_no",
-    ...(more ? ["utr", "notes", ...custom.map((c) => c.key)] : []),
+    ...(more
+      ? ["entry_date", "utr", "notes", ...custom.map((c) => c.key)]
+      : []),
   ];
   function onKey(e: React.KeyboardEvent<HTMLInputElement>, key: string) {
     if (e.nativeEvent.isComposing) return;
@@ -285,9 +271,11 @@ export default function EntryScreen({
         return fail("Choose or type a beneficiary", "payee");
       const amt = parseAmount(d.amount);
       if (!amt.ok) return fail("Amount is not valid", "amount");
-      const date = parseDate(d.entry_date);
-      if (!date)
+      const date = d.entry_date.trim() ? parseDate(d.entry_date) : todayIso();
+      if (!date) {
+        setMore(true); // the Date field lives under More fields
         return fail("Date is not valid (use dd/mm/yyyy)", "entry_date");
+      }
       const extra: Record<string, string> = {};
       for (const c of custom)
         if (d[c.key]?.trim()) extra[c.key] = d[c.key].trim();
@@ -305,7 +293,7 @@ export default function EntryScreen({
               save_to_master: saveToMaster,
             },
         amount_paise: amt.paise ?? 0,
-        reference_no: d.reference_no,
+        reference_no: "", // references now come from reports and imports
         entry_date: date,
         utr: d.utr,
         notes: d.notes,
@@ -335,7 +323,7 @@ export default function EntryScreen({
       onTxChanged();
       if (newAccount) onMasterChanged();
       show(`Saved ₹${formatPaise(r.data!.amount_paise)} · ${r.data!.payee}`);
-      setD((x) => ({ ...blank(x.entry_date), reference_no: x.reference_no })); // date and reference no stay for the next one
+      setD(blank()); // the Date goes back to its default (today) after every saved transaction
       setAccountId(null);
       refs.current.payee?.focus();
     } finally {
@@ -389,9 +377,15 @@ export default function EntryScreen({
   // ---------- report ----------
   async function generate() {
     if (!tplId) return show("Choose a template first", { tone: "error" });
+    const iso = parseDate(repDate);
+    if (!iso)
+      return show("Enter the report date as dd/mm/yyyy", { tone: "error" });
     const r = await window.api.reports.prepare(
       tplId,
       rows.map((x) => x.uid),
+      "",
+      refNo.trim(),
+      iso,
     );
     if (!r.ok) return show(r.error ?? "Could not generate", { tone: "error" });
     window.api.prefs.set("last_template", String(tplId));
@@ -410,6 +404,8 @@ export default function EntryScreen({
       Number(tplId),
       rows.map((x) => x.uid),
       report!.title,
+      refNo.trim(),
+      parseDate(repDate) ?? "",
     );
     if (!p.ok)
       return setReport((x) => x && { ...x, busy: false, err: p.error });
@@ -510,19 +506,18 @@ export default function EntryScreen({
             <hr className="sep" />
             <div className="fgrid">
               {field("amount", labels.amount_paise + " (₹) *", { right: true })}
-              {field("entry_date", labels.entry_date, {
-                placeholder: "dd/mm/yyyy",
-              })}
-              {field("reference_no", labels.reference_no, { span2: true })}
             </div>
             <button className="moretoggle" onClick={() => setMore((m) => !m)}>
               <Icon name={more ? "minus" : "add"} className="ic-inline" />{" "}
               {more
                 ? "Fewer fields"
-                : `More fields (${labels.utr}, ${labels.notes}${custom.length ? ", custom" : ""})`}
+                : `More fields (${labels.entry_date}, ${labels.utr}, ${labels.notes}${custom.length ? ", custom" : ""})${d.entry_date.trim() ? ` · ${labels.entry_date}: ${d.entry_date.trim()}` : ""}`}
             </button>
             {more && (
               <div className="fgrid">
+                {field("entry_date", labels.entry_date, {
+                  placeholder: "dd/mm/yyyy · blank = today",
+                })}
                 {field("utr", labels.utr)}
                 {field("notes", labels.notes)}
                 {custom.map((c) => field(c.key, c.label))}
@@ -594,24 +589,6 @@ export default function EntryScreen({
                             <Icon name="check" className="ic-inline" /> report
                           </span>
                         )}
-                        {refCheck.note &&
-                          (r.reference_no ? (
-                            <div
-                              className="muted"
-                              style={{ fontSize: "var(--fs-xs)" }}
-                            >
-                              Ref: {r.reference_no}
-                            </div>
-                          ) : (
-                            <div
-                              style={{
-                                fontSize: "var(--fs-xs)",
-                                color: "var(--danger)",
-                              }}
-                            >
-                              No ref
-                            </div>
-                          ))}
                       </td>
                       <td className="r">{formatPaise(r.amount_paise)}</td>
                       <td>
@@ -630,31 +607,41 @@ export default function EntryScreen({
               </table>
             )}
           </div>
-          {refCheck.note && (
-            <div
-              className="notice"
-              style={{ margin: "0 var(--sp-3) var(--sp-2)" }}
-            >
-              {refCheck.note}
-            </div>
-          )}
-          {refCheck.none && (
-            <div
-              className="muted"
-              style={{
-                fontSize: "var(--fs-sm)",
-                margin: "0 var(--sp-3) var(--sp-2)",
-              }}
-            >
-              No reference number on these transactions.
-            </div>
-          )}
+
           <footer>
             <div className="pvtotal">
               <span className="muted">
                 {rows.length} transaction{rows.length === 1 ? "" : "s"} · total
               </span>
               <span className="big">₹{formatPaise(total)}</span>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 140px",
+                gap: "var(--sp-2)",
+                marginBottom: "var(--sp-2)",
+              }}
+            >
+              <div className="field">
+                <label htmlFor="rep-ref">Reference no</label>
+                <input
+                  id="rep-ref"
+                  value={refNo}
+                  maxLength={100}
+                  placeholder="e.g. REF-101"
+                  onChange={(e) => setRefNo(e.target.value)}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="rep-date">Date</label>
+                <input
+                  id="rep-date"
+                  value={repDate}
+                  placeholder="dd/mm/yyyy"
+                  onChange={(e) => setRepDate(e.target.value)}
+                />
+              </div>
             </div>
             <div className="pvactions">
               <select
@@ -751,6 +738,8 @@ export default function EntryScreen({
               await window.api.preview.clear();
               await reloadRows();
               onTxChanged();
+              setRefNo("");
+              setRepDate(fmtDate(todayIso()));
             }
           }}
         >
@@ -799,6 +788,8 @@ export default function EntryScreen({
                     await window.api.preview.clear();
                     await reloadRows();
                     onTxChanged();
+                    setRefNo("");
+                    setRepDate(fmtDate(todayIso()));
                     closeReport();
                   }}
                 >

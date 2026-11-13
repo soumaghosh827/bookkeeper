@@ -77,7 +77,8 @@ const api: BookkeeperApi = {
     setPlan: (id, plan) => inv("tpl:setPlan", id, plan),
   },
   reports: {
-    prepare: (id, uids, title) => inv("rep:prepare", id, uids, title),
+    prepare: (id, uids, title, refNo, reportDate) =>
+      inv("rep:prepare", id, uids, title, refNo, reportDate),
     save: (r, names) => inv("rep:save", r, names),
     discard: () => inv("rep:discard"),
   },

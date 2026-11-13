@@ -197,7 +197,7 @@ export function createAccount(
   return { ok: true, data: getAccount(db, insertAccount(db, a, true))! };
 }
 
-export function updateAccount(
+function applyAccountChanges(
   db: DB,
   id: string,
   changes: Partial<AccountInput>,
@@ -273,7 +273,23 @@ export function correctAccount(
   const only: Partial<AccountInput> = {};
   for (const k of LOCKED_ACCOUNT_KEYS)
     if (changes[k] !== undefined) only[k] = changes[k];
-  return updateAccount(db, id, only, c, reason);
+  return applyAccountChanges(db, id, only, c, reason);
+}
+
+/** Grid edits: remarks and custom columns only. Name, bank, branch, account number and IFSC go through correctAccount. */
+export function updateAccount(
+  db: DB,
+  id: string,
+  changes: Partial<AccountInput>,
+  c: Confirmations = {},
+): Result<Account> {
+  if (LOCKED_ACCOUNT_KEYS.some((k) => changes[k] !== undefined))
+    return {
+      ok: false,
+      error:
+        'Name, bank, branch, account number and IFSC can only be changed through "Edit"',
+    };
+  return applyAccountChanges(db, id, changes, c);
 }
 
 /** Keeps the "most used" ranking and last-used info current. Call after any transaction create/delete. */

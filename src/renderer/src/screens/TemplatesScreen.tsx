@@ -20,7 +20,7 @@ import { Toast, useToast } from "@/components/Toast";
 const PLACEHOLDERS: [string, string][] = [
   [
     "{total} {total_words} {count} {today} {ref_no}",
-    "Totals worked out by the app, today’s date, reference numbers of the listed transactions",
+    "Totals worked out by the app, plus the report’s Date ({today}) and Reference no ({ref_no}) as entered in the list panel. {today} is the report date, which is today unless you change it",
   ],
   [
     "{payee} {bank} {branch} {account_no} {ifsc} {amount} {amount_words} {date} {reference_no} {utr} {notes}",

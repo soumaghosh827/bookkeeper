@@ -11,7 +11,14 @@ import {
   type TxRow,
   type OutputSpec,
 } from "@shared/types";
-import { fmtDate, formatPaise, rupeesInWords, todayIso } from "@shared/format";
+import {
+  fmtDate,
+  formatPaise,
+  parseDate,
+  rupeesInWords,
+  todayIso,
+} from "@shared/format";
+import { addReference, cleanRef } from "./txReferences";
 import { getRowsByUids } from "./transactions";
 import { explain, getTemplateFile, getTexts } from "./templates";
 import { buildTableXlsx } from "./tableExcel";
@@ -36,6 +43,8 @@ interface Pending {
   templateName: string;
   uids: string[];
   total: number;
+  refNo: string; // one reference for the whole report ('' = none)
+  reportDate: string; // YYYY-MM-DD
 }
 let pending: Pending | null = null;
 
@@ -213,11 +222,10 @@ function outputFileName(
   o: OutputSpec,
   templateName: string,
   used: Set<string>,
+  date: string, // the report date, YYYY-MM-DD
 ): string {
   const stem = safeName(
-    o.name
-      .replace(/\{template\}/gi, templateName)
-      .replace(/\{date\}/gi, todayIso()),
+    o.name.replace(/\{template\}/gi, templateName).replace(/\{date\}/gi, date),
   ).replace(/\.(docx|xlsx)$/i, "");
   let name = `${stem}.${o.kind}`;
   for (let n = 2; used.has(name.toLowerCase()); n++)
@@ -256,9 +264,18 @@ export async function prepare(
   templateId: number,
   uids: string[],
   title = "",
+  refNo = "",
+  reportDate = "",
 ): Promise<Result<ReportPrepared>> {
   pending = null;
   if (!uids.length) return { ok: false, error: "The list is empty" };
+  const ref = cleanRef(refNo);
+  let repDate = todayIso();
+  if (reportDate) {
+    const d = parseDate(reportDate);
+    if (!d) return { ok: false, error: "The report date is not valid" };
+    repDate = d;
+  }
   const tpl = getTemplateFile(db, templateId);
   if (!tpl) return { ok: false, error: "Template not found" };
   const plan = planOf(db, templateId);
@@ -286,7 +303,6 @@ export async function prepare(
     utr: r.utr,
     notes: r.notes,
   }));
-  const refs = [...new Set(rows.map((r) => r.reference_no).filter(Boolean))];
   const texts = Object.fromEntries(
     getTexts(db, templateId).map((t) => [t.key, t.value]),
   );
@@ -298,15 +314,15 @@ export async function prepare(
     count: rows.length,
     total: formatPaise(total),
     total_words: rupeesInWords(total),
-    today: fmtDate(todayIso()),
-    ref_no: refs.join(", "),
+    today: fmtDate(repDate),
+    ref_no: ref, // the report's own reference ('' when none was entered)
   };
 
   try {
     const files: PendingFile[] = [];
     const used = new Set<string>();
     for (const o of plan.outputs) {
-      const fileName = outputFileName(o, tpl.name, used);
+      const fileName = outputFileName(o, tpl.name, used, repDate);
       let buffer: Buffer;
       if (o.kind === "xlsx") buffer = await buildTableXlsx(model);
       else {
@@ -321,6 +337,8 @@ export async function prepare(
       templateName: tpl.name,
       uids: rows.map((r) => r.uid),
       total,
+      refNo: ref,
+      reportDate: repDate,
     };
     return {
       ok: true,
@@ -349,26 +367,35 @@ export const discard = () => {
   pending = null;
 };
 
-/** Called after the file is written. Records the report only when the user kept "save report to database" ticked. */
+/** Called after the file is written. Records the report only when the user kept "save report to database" ticked.
+ *  One DB transaction: the report, its items and one reference per transaction (tagged with the report).
+ *  Transaction dates are never touched. */
 export function record(db: DB, fileName: string) {
   const p = pending;
   if (!p) return;
   db.transaction(() => {
+    const now = new Date().toISOString();
     const r = db
       .prepare(
-        "INSERT INTO reports (created_at, template_id, template_name, file_name, item_count, total_paise) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO reports (created_at, template_id, template_name, file_name, item_count, total_paise, ref_no, report_date) VALUES (?,?,?,?,?,?,?,?)",
       )
       .run(
-        new Date().toISOString(),
+        now,
         p.templateId,
         p.templateName,
         fileName,
         p.uids.length,
         p.total,
+        p.refNo,
+        p.reportDate,
       );
+    const reportId = Number(r.lastInsertRowid);
     const ins = db.prepare(
       "INSERT OR IGNORE INTO report_items (report_id, tx_uid) VALUES (?, ?)",
     );
-    for (const u of p.uids) ins.run(Number(r.lastInsertRowid), u);
+    for (const u of p.uids) {
+      ins.run(reportId, u);
+      addReference(db, u, p.refNo, { reportId, now });
+    }
   })();
 }

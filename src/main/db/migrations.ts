@@ -83,6 +83,7 @@ CREATE TABLE templates (
   file BLOB,
   updated_at TEXT NOT NULL
 );
+
 CREATE TABLE template_texts (
   template_id INTEGER NOT NULL REFERENCES templates(id) ON DELETE CASCADE,
   key TEXT NOT NULL,
@@ -97,8 +98,11 @@ CREATE TABLE reports (
   template_name TEXT NOT NULL,
   file_name TEXT NOT NULL,
   item_count INTEGER NOT NULL,
-  total_paise INTEGER NOT NULL
+  total_paise INTEGER NOT NULL,
+  ref_no TEXT NOT NULL DEFAULT '',
+  report_date TEXT NOT NULL DEFAULT ''   -- YYYY-MM-DD, chosen by the user for the whole report
 );
+
 CREATE TABLE report_items (
   report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
   tx_uid TEXT NOT NULL REFERENCES transactions(uid),

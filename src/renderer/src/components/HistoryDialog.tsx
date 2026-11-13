@@ -67,7 +67,10 @@ export default function HistoryDialog({
             </div>
             {Object.entries(e.changes).map(([k, [from, to]]) => (
               <div key={k}>
-                <strong>{name(k)}:</strong> {val(k, from)} → {val(k, to)}
+                <strong>{name(k)}:</strong>{" "}
+                {from === null || from === undefined || from === ""
+                  ? val(k, to)
+                  : `${val(k, from)} → ${val(k, to)}`}
               </div>
             ))}
             {e.reason && (

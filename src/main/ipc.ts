@@ -249,14 +249,15 @@ export function registerIpc() {
   H("tpl:setPlan", (_e, id: number, plan) =>
     run(() => tpl.setPlan(db(), id, plan)),
   );
-
-  H("rep:prepare", (_e, id, uids, title) =>
+  H("rep:prepare", (_e, id, uids, title, refNo, reportDate) =>
     runAsync(() =>
       rep.prepare(
         db(),
         id,
         (uids as string[]).map(String),
         String(title ?? "").slice(0, 120),
+        String(refNo ?? ""),
+        String(reportDate ?? ""),
       ),
     ),
   );

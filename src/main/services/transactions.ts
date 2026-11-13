@@ -37,8 +37,10 @@ import {
 const RC = "(SELECT COUNT(*) FROM report_items r WHERE r.tx_uid = t.uid)";
 // All references of a transaction as one text, for search/filter/sort. (Display order is set in withRefs below.)
 const REFS = `COALESCE((SELECT group_concat(ref_no, ', ') FROM transaction_references x WHERE x.transaction_id = t.uid), '')`;
+// Sort key: the most recently added reference, so transactions of the latest report group together.
+const LATEST_REF = `COALESCE((SELECT x.ref_no FROM transaction_references x WHERE x.transaction_id = t.uid ORDER BY x.id DESC LIMIT 1), '')`;
 const COLS: Record<string, ColDef> = {
-  reference_no: { expr: REFS },
+  reference_no: { expr: REFS, sort: LATEST_REF },
   entry_date: { expr: "t.entry_date", kind: "date" },
   payee: { expr: "a.payee" },
   bank: { expr: "a.bank" },
@@ -55,7 +57,7 @@ const SELECT = `SELECT t.*, a.payee, a.bank, a.branch, a.account_no, a.ifsc, ${R
   EXISTS(SELECT 1 FROM preview_items p WHERE p.tx_uid = t.uid) AS in_preview
   FROM transactions t JOIN accounts a ON a.id = t.account_id`;
 
-/** Replaces each row's reference_no with all its references in the order they were added, e.g. "REF-101, REF-205". */
+/** Replaces each row's reference_no with all its references, newest first, e.g. "REF-205, REF-101". */
 function withRefs<T extends { uid: string; reference_no: string }>(
   db: DB,
   rows: T[],
@@ -65,7 +67,8 @@ function withRefs<T extends { uid: string; reference_no: string }>(
     db,
     rows.map((r) => r.uid),
   );
-  for (const r of rows) r.reference_no = refsText(m.get(r.uid) ?? []);
+  for (const r of rows)
+    r.reference_no = refsText([...(m.get(r.uid) ?? [])].reverse());
   return rows;
 }
 

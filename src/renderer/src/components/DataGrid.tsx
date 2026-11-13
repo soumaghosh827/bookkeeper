@@ -36,16 +36,22 @@ export default function DataGrid<T>(p: {
   empty?: string;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
+  const head = useRef<HTMLDivElement>(null);
   const last = useRef(-1);
   const rowH = rowHeight();
   const selectable = !!p.onSelect;
   const actW = p.actions || p.headerExtra ? (p.actionsW ?? 44) : 0;
   const tpl =
     (selectable ? `${SEL_W}px ` : "") +
-    p.cols.map((c) => c.w + "px").join(" ") +
+    p.cols
+      .map((c, i) =>
+        i === p.cols.length - 1 ? `minmax(${c.w}px, 1fr)` : `${c.w}px`,
+      )
+      .join(" ") +
     (actW ? ` ${actW}px` : "");
-  const width =
+  const minWidth =
     (selectable ? SEL_W : 0) + p.cols.reduce((n, c) => n + c.w, 0) + actW;
+  const width = `max(${minWidth}px, 100%)`;
 
   const v = useVirtualizer({
     count: p.rows.length,
@@ -81,7 +87,7 @@ export default function DataGrid<T>(p: {
 
   return (
     <div className="dg">
-      <div className="dg-scroll" ref={scroll}>
+      <div className="dg-head" ref={head}>
         <div className="dg-headwrap" style={{ width }}>
           <div className="dg-row" style={{ gridTemplateColumns: tpl }}>
             {selectable && (
@@ -142,10 +148,19 @@ export default function DataGrid<T>(p: {
                 )}
               </div>
             ))}
-            {actW > 0 && <div />}
+            {actW > 0 && <div className="dg-act" />}
           </div>
         </div>
+      </div>
 
+      <div
+        className="dg-scroll"
+        ref={scroll}
+        onScroll={(e) => {
+          if (head.current)
+            head.current.scrollLeft = e.currentTarget.scrollLeft;
+        }}
+      >
         {p.rows.length === 0 && (
           <div className="dg-empty">{p.empty ?? "Nothing to show"}</div>
         )}

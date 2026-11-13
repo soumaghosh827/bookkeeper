@@ -15,14 +15,42 @@
   min-height: 0;
   overflow: auto;
   position: relative;
+  scrollbar-gutter: stable;
 }
-.dg-headwrap {
-  position: sticky;
-  top: 0;
+/* slimmer scrollbars for the grid only; track stays transparent */
+.dg-scroll::-webkit-scrollbar,
+.dg-head::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.dg-scroll::-webkit-scrollbar-track,
+.dg-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.dg-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent; /* inset look without a surface-coloured ring */
+  background-clip: padding-box;
+}
+.dg-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-faint);
+}
+.dg-scroll::-webkit-scrollbar-thumb:active {
+  background-color: var(--text-muted);
+}
+.dg-head {
+  position: relative;
   z-index: 3;
-  background: var(--surface-2);
+  overflow: hidden; /* scrolled from code to follow the body */
+  scrollbar-gutter: stable; /* reserve the same gutter as the body so columns line up */
+  background: linear-gradient(
+    var(--surface-2) var(--row-h),
+    var(--surface-sunken) 0
+  );
   border-bottom: 1px solid var(--border-strong);
   box-shadow: var(--shadow-1);
+}
+.dg-headwrap {
+  background: var(--surface-2);
 }
 .dg-row {
   display: grid;
@@ -30,6 +58,7 @@
   height: var(--row-h);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  grid-template-rows: minmax(0, 1fr) 0;
 }
 .dg-row:hover {
   background: color-mix(in srgb, var(--selected) 45%, var(--surface));
@@ -47,7 +76,6 @@
 .dg-headwrap .dg-row:hover {
   background: transparent;
 }
-
 .dg-th {
   height: var(--row-h);
   display: flex;
@@ -138,11 +166,49 @@
   display: grid;
   place-items: center;
 }
-.dg-act {
+/* floating hover actions: sits in the row's hidden 2nd grid row, pinned to the right edge */
+.dg-row > .dg-act {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  align-self: start;
+  justify-self: end;
+  width: max-content;
+  height: calc(var(--row-h) - 6px);
+  margin-top: calc(3px - var(--row-h)); /* pulls it up over the row */
+  padding: 0 4px;
+  position: sticky;
+  right: 8px;
+  z-index: 2;
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 2px;
+  background: inherit; /* follows row hover / selected colour */
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.dg-row:hover > .dg-act,
+.dg-row.sel > .dg-act {
+  opacity: 1;
+  pointer-events: auto;
+}
+.dg-act button:disabled {
+  opacity: 0.4; /* locked Delete */
+}
+/* header: the + button is always visible, plain, no pill */
+.dg-headwrap .dg-act {
+  right: 0;
+  opacity: 1;
+  pointer-events: auto;
+  border: 0;
+  box-shadow: none;
+  background: var(--surface-2);
+}
+.dg-headwrap .dg-filters .dg-act {
+  display: none;
 }
 .dg-act button {
   height: calc(var(--row-h) - 8px);

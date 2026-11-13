@@ -331,7 +331,7 @@ export default function TransactionsScreen({
         onNeedMore={g.loadMore}
         selected={selected}
         onSelect={setSelected}
-        actionsW={picker ? 0 : 128}
+        actionsW={picker ? 0 : 96}
         actions={
           picker
             ? undefined

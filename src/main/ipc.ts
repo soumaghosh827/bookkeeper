@@ -108,6 +108,14 @@ export function registerIpc() {
   H("acc:update", (_e, id, ch, c) =>
     run(() => acc.updateAccount(db(), String(id), ch, c)),
   );
+  H("acc:correct", (_e, id, ch, c, auth) =>
+    run(() =>
+      acc.correctAccount(db(), String(id), ch, c ?? {}, auth ?? {}, (p) =>
+        vault.verifyPassword(p),
+      ),
+    ),
+  );
+  H("acc:history", (_e, id) => acc.accountHistory(db(), String(id)));
 
   H("imp:pick", () =>
     runAsync(async () => {

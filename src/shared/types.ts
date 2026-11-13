@@ -596,6 +596,13 @@ export interface BookkeeperApi {
       changes: Partial<AccountInput>,
       confirm?: Confirmations,
     ): Promise<Result<Account>>;
+    correct(
+      id: string,
+      changes: Partial<AccountInput>,
+      confirm?: Confirmations,
+      auth?: { password?: string; reason?: string },
+    ): Promise<Result<Account>>;
+    history(id: string): Promise<TxHistoryEntry[]>;
   };
   masterImport: {
     pickFile(): Promise<Result<ImportFileInfo>>;

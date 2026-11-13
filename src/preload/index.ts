@@ -25,6 +25,8 @@ const api: BookkeeperApi = {
     list: (q) => inv("acc:list", q),
     create: (a, c) => inv("acc:create", a, c),
     update: (id, ch, c) => inv("acc:update", id, ch, c),
+    correct: (id, ch, c, auth) => inv("acc:correct", id, ch, c, auth),
+    history: (id) => inv("acc:history", id),
   },
   masterImport: {
     pickFile: () => inv("imp:pick"),

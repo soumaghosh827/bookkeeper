@@ -412,7 +412,16 @@ export default function TransactionsScreen({
 
       {histRow && (
         <HistoryDialog
-          row={histRow}
+          kind="transactions"
+          id={histRow.uid}
+          createdAt={histRow.created_at}
+          summary={
+            <>
+              <strong>{histRow.payee}</strong> · ₹
+              {formatPaise(histRow.amount_paise)} ·{" "}
+              {fmtDate(histRow.entry_date)}
+            </>
+          }
           labels={labels}
           onClose={() => setHistRow(null)}
         />
@@ -420,10 +429,52 @@ export default function TransactionsScreen({
 
       {fixRow && (
         <CorrectDialog
-          row={fixRow}
-          labels={labels}
+          title="Correct this transaction"
+          noun="transaction"
+          subject={<strong>{fixRow.payee}</strong>}
+          createdAt={fixRow.created_at}
+          fields={[
+            {
+              key: "amount_paise",
+              label: labels.amount_paise,
+              value: fixRow.amount_paise,
+              text: formatPaise(fixRow.amount_paise),
+              was: `₹${formatPaise(fixRow.amount_paise)}`,
+              parse: (t) => {
+                const a = parseAmount(t);
+                return a.ok
+                  ? { value: a.paise ?? 0 }
+                  : { error: `${labels.amount_paise} is not valid` };
+              },
+            },
+            {
+              key: "entry_date",
+              label: labels.entry_date,
+              value: fixRow.entry_date,
+              text: fmtDate(fixRow.entry_date),
+              was: fmtDate(fixRow.entry_date),
+              parse: (t) => {
+                const d = parseDate(t);
+                return d
+                  ? { value: d }
+                  : {
+                      error: `${labels.entry_date} is not valid (use dd/mm/yyyy)`,
+                    };
+              },
+            },
+            {
+              key: "reference_no",
+              label: labels.reference_no,
+              value: fixRow.reference_no,
+              text: fixRow.reference_no,
+              was: fixRow.reference_no || "blank",
+              maxLength: 100,
+            },
+          ]}
           onClose={() => setFixRow(null)}
-          onSubmit={(ch, auth) => doCorrect(fixRow, ch, auth)}
+          onSubmit={(ch, auth) =>
+            doCorrect(fixRow, ch as Parameters<typeof doCorrect>[1], auth)
+          }
         />
       )}
 

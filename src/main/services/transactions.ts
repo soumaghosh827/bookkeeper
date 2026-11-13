@@ -15,7 +15,7 @@ import {
 import { HIGH_VALUE_PAISE, canCorrectFreely, canDelete } from "@shared/rules";
 import { parseDate } from "@shared/format";
 import { FieldError } from "./errors";
-import { audit } from "./audit";
+import { audit, rowHistory } from "./audit";
 import { buildGrid, type ColDef } from "./gridQuery";
 import {
   findSimilar,
@@ -406,25 +406,7 @@ export function removeTransaction(db: DB, uid: string): Result {
 
 /** Audit trail of one transaction, newest first. Uses the row_id index, so it stays fast on large logs. */
 export function txHistory(db: DB, uid: string): TxHistoryEntry[] {
-  const rows = db
-    .prepare(
-      "SELECT at, action, changes, reason FROM audit_log WHERE table_name = 'transactions' AND row_id = ? ORDER BY id DESC",
-    )
-    .all(uid) as {
-    at: string;
-    action: TxHistoryEntry["action"];
-    changes: string;
-    reason: string | null;
-  }[];
-  return rows.map((r) => {
-    let changes: TxHistoryEntry["changes"] = {};
-    try {
-      changes = JSON.parse(r.changes);
-    } catch {
-      /* keep empty */
-    }
-    return { at: r.at, action: r.action, changes, reason: r.reason };
-  });
+  return rowHistory(db, "transactions", uid);
 }
 
 export { findSimilar };

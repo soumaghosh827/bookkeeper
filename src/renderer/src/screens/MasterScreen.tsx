@@ -10,6 +10,8 @@ import DataGrid, { type GridCol } from "@/components/DataGrid";
 import NameDialog from "@/components/NameDialog";
 import Icon from "@/components/Icon";
 import UndoImportButton from "@/components/UndoImportButton";
+import CorrectDialog from "@/components/CorrectDialog";
+import HistoryDialog from "@/components/HistoryDialog";
 import ImportPanel from "./ImportPanel";
 import { Toast, useToast } from "@/components/Toast";
 import { useConfirmFlow } from "@/lib/useConfirmFlow";
@@ -23,6 +25,7 @@ const W: Record<string, number> = {
   ifsc: 120,
   remarks: 240,
 };
+
 const blank = (): Record<string, string> => ({
   payee: "",
   account_no: "",
@@ -31,6 +34,8 @@ const blank = (): Record<string, string> => ({
   ifsc: "",
   remarks: "",
 });
+
+const LOCKED = ACCOUNT_KEYS.filter((k) => k !== "remarks");
 
 export default function MasterScreen({
   labels,
@@ -52,6 +57,8 @@ export default function MasterScreen({
   const [custom, setCustom] = useState<CustomColumn[]>([]);
   const [form, setForm] = useState(blank());
   const [nameDlg, setNameDlg] = useState(false);
+  const [fixRow, setFixRow] = useState<Account | null>(null);
+  const [histRow, setHistRow] = useState<Account | null>(null);
   const first = useRef<HTMLInputElement>(null);
   const { toast, show, hide } = useToast();
   const { withConfirm, element } = useConfirmFlow();
@@ -73,7 +80,7 @@ export default function MasterScreen({
         key: k,
         label: labels[k],
         w: W[k],
-        editable: true,
+        editable: k === "remarks",
       })),
       ...custom.map((c) => ({
         key: c.key,
@@ -121,6 +128,27 @@ export default function MasterScreen({
     g.patch((x) => x.id === a.id, r.data!);
     onChanged(); // transactions and the entry list read from master, so they refresh
     return text(r.data!, c);
+  }
+
+  async function doCorrect(
+    a: Account,
+    changes: Partial<AccountInput>,
+    auth: { password?: string; reason?: string },
+  ): Promise<boolean | string> {
+    const r = await withConfirm(
+      (conf) => window.api.accounts.correct(a.id, changes, conf, auth),
+      {
+        title: "Check this change",
+        payee: a.payee,
+        existingAction: showExisting,
+      },
+    );
+    if (!r) return false; // cancelled at a confirmation: dialog stays open
+    if (!r.ok) return r.error ?? "Could not save";
+    g.patch((x) => x.id === a.id, r.data!);
+    onChanged(); // transactions and the entry list read from accounts, so they refresh
+    show("Account updated");
+    return true;
   }
 
   async function add() {
@@ -257,6 +285,25 @@ export default function MasterScreen({
         filters={g.filters}
         onFilter={g.setFilter}
         onNeedMore={g.loadMore}
+        actionsW={96}
+        actions={(a) => (
+          <>
+            <button
+              className="ghost"
+              title="History"
+              onClick={() => setHistRow(a)}
+            >
+              <Icon name="history" />
+            </button>
+            <button
+              className="ghost"
+              title="Edit beneficiary, account no, bank, branch or IFSC"
+              onClick={() => setFixRow(a)}
+            >
+              <Icon name="edit" />
+            </button>
+          </>
+        )}
         headerExtra={
           <button
             className="ghost icon small"
@@ -276,9 +323,11 @@ export default function MasterScreen({
         }
       />
       <div className="muted" style={{ fontSize: "var(--fs-sm)" }}>
-        Double-click or <kbd>F2</kbd> to edit a cell · <kbd>Enter</kbd> saves ·{" "}
-        <kbd>Esc</kbd> cancels · changes here update every transaction that uses
-        the account.
+        Double-click or <kbd>F2</kbd> to edit {labels.remarks} and custom
+        columns · <kbd>Enter</kbd> saves · <kbd>Esc</kbd> cancels · use{" "}
+        <Icon name="edit" className="ic-inline" /> to edit{" "}
+        {LOCKED.map((k) => labels[k]).join(", ")} · changes here update every
+        transaction that uses the account.
       </div>
 
       {nameDlg && (
@@ -294,6 +343,57 @@ export default function MasterScreen({
           }}
         />
       )}
+
+      {histRow && (
+        <HistoryDialog
+          kind="accounts"
+          id={histRow.id}
+          createdAt={histRow.created_at}
+          summary={
+            <>
+              <strong>{histRow.payee}</strong> · {histRow.account_no}
+            </>
+          }
+          labels={labels}
+          onClose={() => setHistRow(null)}
+        />
+      )}
+
+      {fixRow && (
+        <CorrectDialog
+          title="Edit this account"
+          noun="account"
+          subject={
+            <>
+              <strong>{fixRow.payee}</strong>
+              <span className="muted">
+                {" "}
+                · used by {fixRow.use_count} transaction
+                {fixRow.use_count === 1 ? "" : "s"}, which will all show the new
+                details
+              </span>
+            </>
+          }
+          createdAt={fixRow.created_at}
+          fields={LOCKED.map((k) => ({
+            key: k,
+            label: labels[k],
+            value: fixRow[k],
+            text: fixRow[k],
+            was: fixRow[k] || "blank",
+            maxLength: k === "account_no" ? 60 : undefined,
+            parse:
+              k === "ifsc"
+                ? (t: string) => ({ value: t.trim().toUpperCase() })
+                : undefined,
+          }))}
+          onClose={() => setFixRow(null)}
+          onSubmit={(ch, auth) =>
+            doCorrect(fixRow, ch as Partial<AccountInput>, auth)
+          }
+        />
+      )}
+
       {element}
       <Toast t={toast} onClose={hide} />
     </>

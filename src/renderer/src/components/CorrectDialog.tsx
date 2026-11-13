@@ -1,31 +1,49 @@
-import { useState } from "react";
-import type { Labels, TxChanges, TxRow } from "@shared/types";
+import { useState, type ReactNode } from "react";
 import { CORRECT_FREE_HOURS, canCorrectFreely } from "@shared/rules";
-import { fmtDate, formatPaise, parseAmount, parseDate } from "@shared/format";
 import Modal from "./Modal";
 
 export interface CorrectAuth {
   password?: string;
   reason?: string;
 }
-type Changes = Pick<TxChanges, "amount_paise" | "entry_date" | "reference_no">;
+export type Changes = Record<string, unknown>;
+
+export interface CorrectField {
+  key: string;
+  label: string;
+  /** Stored value; the parsed input is compared against it to detect a change. */
+  value: unknown;
+  /** Text shown in the input. */
+  text: string;
+  /** Shown as "(was …)". */
+  was: string;
+  maxLength?: number;
+  /** Defaults to trimming the text. */
+  parse?: (text: string) => { value: unknown } | { error: string };
+}
 
 /** onSubmit returns: true = saved (close), false = user cancelled a confirmation (stay open), string = error to show. */
 export default function CorrectDialog({
-  row,
-  labels,
+  title,
+  noun,
+  subject,
+  createdAt,
+  fields,
   onSubmit,
   onClose,
 }: {
-  row: TxRow;
-  labels: Labels;
+  title: string;
+  noun: string;
+  subject: ReactNode;
+  createdAt: string;
+  fields: CorrectField[];
   onSubmit: (changes: Changes, auth: CorrectAuth) => Promise<boolean | string>;
   onClose: () => void;
 }) {
-  const needsAuth = !canCorrectFreely(row.created_at);
-  const [amount, setAmount] = useState(formatPaise(row.amount_paise));
-  const [date, setDate] = useState(fmtDate(row.entry_date));
-  const [ref, setRef] = useState(row.reference_no);
+  const needsAuth = !canCorrectFreely(createdAt);
+  const [texts, setTexts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(fields.map((f) => [f.key, f.text])),
+  );
   const [reason, setReason] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
@@ -33,15 +51,13 @@ export default function CorrectDialog({
 
   async function go() {
     if (busy) return;
-    const a = parseAmount(amount);
-    if (!a.ok) return setErr(`${labels.amount_paise} is not valid`);
-    const d = parseDate(date);
-    if (!d) return setErr(`${labels.entry_date} is not valid (use dd/mm/yyyy)`);
     const changes: Changes = {};
-    if ((a.paise ?? 0) !== row.amount_paise)
-      changes.amount_paise = a.paise ?? 0;
-    if (d !== row.entry_date) changes.entry_date = d;
-    if (ref.trim() !== row.reference_no) changes.reference_no = ref.trim();
+    for (const f of fields) {
+      const t = texts[f.key] ?? "";
+      const p = f.parse ? f.parse(t) : { value: t.trim() };
+      if ("error" in p) return setErr(p.error);
+      if (p.value !== f.value) changes[f.key] = p.value;
+    }
     if (!Object.keys(changes).length) return setErr("Nothing has changed");
     if (needsAuth && !reason.trim()) return setErr("Please give a reason");
     if (needsAuth && !password) return setErr("Please enter your password");
@@ -59,7 +75,7 @@ export default function CorrectDialog({
 
   return (
     <Modal
-      title="Correct this transaction"
+      title={title}
       onClose={onClose}
       actions={
         <>
@@ -70,49 +86,28 @@ export default function CorrectDialog({
         </>
       }
     >
-      <p>
-        <strong>{row.payee}</strong>
-      </p>
-      <div className="field">
-        <label>
-          {labels.amount_paise}{" "}
-          <span className="muted">(was ₹{formatPaise(row.amount_paise)})</span>
-        </label>
-        <input
-          autoFocus
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          onKeyDown={enter}
-        />
-      </div>
-      <div className="field">
-        <label>
-          {labels.entry_date}{" "}
-          <span className="muted">(was {fmtDate(row.entry_date)})</span>
-        </label>
-        <input
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          onKeyDown={enter}
-        />
-      </div>
-      <div className="field">
-        <label>
-          {labels.reference_no}{" "}
-          <span className="muted">(was {row.reference_no || "blank"})</span>
-        </label>
-        <input
-          maxLength={100}
-          value={ref}
-          onChange={(e) => setRef(e.target.value)}
-          onKeyDown={enter}
-        />
-      </div>
+      <p>{subject}</p>
+      {fields.map((f, i) => (
+        <div className="field" key={f.key}>
+          <label>
+            {f.label} <span className="muted">(was {f.was})</span>
+          </label>
+          <input
+            autoFocus={i === 0}
+            maxLength={f.maxLength}
+            value={texts[f.key] ?? ""}
+            onChange={(e) =>
+              setTexts((t) => ({ ...t, [f.key]: e.target.value }))
+            }
+            onKeyDown={enter}
+          />
+        </div>
+      ))}
       {needsAuth && (
         <>
           <div className="notice" style={{ marginBottom: 8 }}>
-            This transaction is more than {CORRECT_FREE_HOURS} hours old. Enter
-            a reason and your password. The change is recorded in its history.
+            This {noun} is more than {CORRECT_FREE_HOURS} hours old. Enter a
+            reason and your password. The change is recorded in its history.
           </div>
           <div className="field">
             <label>Reason</label>

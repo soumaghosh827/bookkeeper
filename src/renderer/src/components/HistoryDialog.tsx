@@ -1,23 +1,29 @@
-import { useEffect, useState } from "react";
-import type { Labels, TxHistoryEntry, TxRow } from "@shared/types";
+import { useEffect, useState, type ReactNode } from "react";
+import type { Labels, TxHistoryEntry } from "@shared/types";
 import { fmtDate, formatPaise } from "@shared/format";
 import Modal from "./Modal";
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN");
 
 export default function HistoryDialog({
-  row,
+  kind,
+  id,
+  createdAt,
+  summary,
   labels,
   onClose,
 }: {
-  row: TxRow;
+  kind: "transactions" | "accounts";
+  id: string;
+  createdAt: string;
+  summary: ReactNode;
   labels: Labels;
   onClose: () => void;
 }) {
   const [items, setItems] = useState<TxHistoryEntry[] | null>(null);
   useEffect(() => {
-    window.api.transactions.history(row.uid).then(setItems);
-  }, [row.uid]);
+    window.api[kind].history(id).then(setItems);
+  }, [kind, id]);
 
   const name = (k: string) =>
     (labels as unknown as Record<string, string>)[k] ??
@@ -41,10 +47,7 @@ export default function HistoryDialog({
         </button>
       }
     >
-      <p>
-        <strong>{row.payee}</strong> · ₹{formatPaise(row.amount_paise)} ·{" "}
-        {fmtDate(row.entry_date)}
-      </p>
+      <p>{summary}</p>
       <div style={{ maxHeight: "55vh", overflow: "auto" }}>
         {items === null && <p className="muted">Loading…</p>}
         {items !== null && edits.length === 0 && (
@@ -76,7 +79,7 @@ export default function HistoryDialog({
         ))}
         {items !== null && (
           <div style={{ padding: "8px 0" }} className="muted">
-            {when(row.created_at)} · Created
+            {when(createdAt)} · Created
           </div>
         )}
       </div>

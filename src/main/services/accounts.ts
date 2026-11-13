@@ -15,8 +15,10 @@ import {
 } from "@shared/types";
 import { cleanIfsc, isValidIfsc } from "@shared/format";
 import { FieldError } from "./errors";
-import { audit } from "./audit";
+import { audit, rowHistory } from "./audit";
 import { buildGrid, esc, type ColDef } from "./gridQuery";
+import { canCorrectFreely } from "@shared/rules";
+import type { CorrectAuth } from "./transactions";
 
 const COLS: Record<string, ColDef> = Object.fromEntries(
   ACCOUNT_KEYS.map((k) => [k, { expr: k }]),
@@ -200,6 +202,7 @@ export function updateAccount(
   id: string,
   changes: Partial<AccountInput>,
   c: Confirmations = {},
+  reason: string | null = null,
 ): Result<Account> {
   const cur = getAccount(db, id);
   if (!cur) return { ok: false, error: "Account not found" };
@@ -235,8 +238,42 @@ export function updateAccount(
     extra: JSON.stringify(extra),
     now: new Date().toISOString(),
   });
-  audit(db, "accounts", id, "update", diff);
+  audit(db, "accounts", id, "update", diff, reason);
   return { ok: true, data: getAccount(db, id)! };
+}
+
+const LOCKED_ACCOUNT_KEYS = [
+  "payee",
+  "bank",
+  "branch",
+  "account_no",
+  "ifsc",
+] as const;
+
+/** Edits the locked fields. Free within 48h of creation; after that it needs the password and a reason. */
+export function correctAccount(
+  db: DB,
+  id: string,
+  changes: Partial<AccountInput>,
+  c: Confirmations,
+  auth: { password?: string; reason?: string },
+  verify: (password: string) => boolean,
+): Result<Account> {
+  const cur = getAccount(db, id);
+  if (!cur) return { ok: false, error: "Account not found" };
+  let reason: string | null = null;
+  if (!canCorrectFreely(cur.created_at)) {
+    reason = String(auth.reason ?? "")
+      .trim()
+      .slice(0, 300);
+    if (!reason) return { ok: false, error: "Reason required" };
+    if (!verify(String(auth.password ?? "")))
+      return { ok: false, error: "Wrong password" };
+  }
+  const only: Partial<AccountInput> = {};
+  for (const k of LOCKED_ACCOUNT_KEYS)
+    if (changes[k] !== undefined) only[k] = changes[k];
+  return updateAccount(db, id, only, c, reason);
 }
 
 /** Keeps the "most used" ranking and last-used info current. Call after any transaction create/delete. */
@@ -249,3 +286,6 @@ export function refreshAccountStats(db: DB, id: string) {
      WHERE id = @id`,
   ).run({ id });
 }
+
+export const accountHistory = (db: DB, id: string) =>
+  rowHistory(db, "accounts", id);

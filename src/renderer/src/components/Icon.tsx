@@ -2,6 +2,8 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  Eye,
+  EyeOff,
   ChevronDown,
   ChevronUp,
   History,
@@ -40,6 +42,8 @@ const ICONS = {
   templates: FileText,
   settings: Settings,
   lock: Lock,
+  eye: Eye,
+  eyeOff: EyeOff,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

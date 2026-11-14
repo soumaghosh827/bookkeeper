@@ -1,7 +1,32 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { AppState, UnitInfo } from "@shared/types";
+import logo from "../assets/logo.svg";
+import Icon from "../components/Icon";
 
 type Mode = "main" | "recover" | "show-key";
+
+function LoginShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="login">
+      <aside className="login-brand">
+        <div>
+          <img className="login-logo" src={logo} alt="" />
+          <h1>BookKeeper</h1>
+          <p className="login-tagline">Enter. Preview. Record. Report.</p>
+        </div>
+        <ul className="login-points">
+          <li>Encrypted on this computer</li>
+          <li>Works fully offline</li>
+          <li>Excel and Word reports in seconds</li>
+        </ul>
+        <div className="login-version">Version {__APP_VERSION__}</div>
+      </aside>
+      <main className="login-main">
+        <div className="auth">{children}</div>
+      </main>
+    </div>
+  );
+}
 
 export default function AuthScreen({
   state,
@@ -18,6 +43,8 @@ export default function AuthScreen({
   const [busy, setBusy] = useState(false);
   const [recoveryKey, setRecoveryKey] = useState("");
   const [saved, setSaved] = useState(false);
+  const [showPw, setShowPw] = useState(false);
+  const [caps, setCaps] = useState(false);
   const creating = state === "no-vault";
   const [unitName, setUnitName] = useState("Unit 1");
   const [unitList, setUnitList] = useState<UnitInfo[]>([]);
@@ -61,137 +88,145 @@ export default function AuthScreen({
   // Shown once after setup. TODO: "skip" path (keep an encrypted copy in the DB, max 2 views, reminder banner).
   if (mode === "show-key") {
     return (
-      <div className="center">
-        <div className="card auth">
-          <h3>Save your recovery key</h3>
-          <p className="muted">
-            This is the only way back in if you forget your password. Write it
-            down or print it and keep it somewhere safe.
-          </p>
-          <p className="rk">{recoveryKey}</p>
-          <p
-            style={{
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              marginTop: 12,
-            }}
-          >
-            <button onClick={() => window.print()}>Print</button>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={saved}
-                onChange={(e) => setSaved(e.target.checked)}
-              />{" "}
-              I have saved my recovery key
-            </label>
-          </p>
-          <button className="primary" disabled={!saved} onClick={onDone}>
-            Continue
-          </button>
-        </div>
-      </div>
+      <LoginShell>
+        <h3>Save your recovery key</h3>
+        <p className="muted">
+          This is the only way back in if you forget your password. Write it
+          down or print it and keep it somewhere safe.
+        </p>
+        <p className="rk">{recoveryKey}</p>
+        <p
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            marginTop: 12,
+          }}
+        >
+          <button onClick={() => window.print()}>Print</button>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={saved}
+              onChange={(e) => setSaved(e.target.checked)}
+            />{" "}
+            I have saved my recovery key
+          </label>
+        </p>
+        <button className="primary" disabled={!saved} onClick={onDone}>
+          Continue
+        </button>
+      </LoginShell>
     );
   }
 
   return (
-    <div className="center">
-      <div className="card auth">
-        <h3>
-          {creating
-            ? "Create master password"
-            : mode === "recover"
-              ? "Reset with recovery key"
-              : "Unlock BookKeeper"}
-        </h3>
-        {creating && (
-          <p className="muted">
-            Minimum 8 characters. Your data is encrypted with it and never
-            leaves this computer.
-          </p>
-        )}
-        {creating && (
-          <div className="field">
-            <label>Unit name (you can add more units later in Settings)</label>
-            <input
-              value={unitName}
-              maxLength={40}
-              onChange={(e) => setUnitName(e.target.value)}
-            />
-          </div>
-        )}
-        {!creating && unitList.length > 1 && (
-          <div className="field">
-            <label>Unit</label>
-            <select value={unitId} onChange={(e) => setUnitId(e.target.value)}>
-              {unitList.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.display}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-        {!creating && unitList.length === 1 && (
-          <p className="muted">{unitList[0].display}</p>
-        )}
-        {mode === "recover" && (
-          <div className="field">
-            <label>Recovery key</label>
-            <input
-              value={rk}
-              onChange={(e) => setRk(e.target.value)}
-              className="mono"
-            />
-          </div>
-        )}
+    <LoginShell>
+      <h3>
+        {creating
+          ? "Create master password"
+          : mode === "recover"
+            ? "Reset with recovery key"
+            : "Unlock BookKeeper"}
+      </h3>
+      {creating && (
+        <p className="muted">
+          Minimum 8 characters. Your data is encrypted with it and never leaves
+          this computer.
+        </p>
+      )}
+      {creating && (
         <div className="field">
-          <label>{mode === "recover" ? "New password" : "Password"}</label>
+          <label>Unit name (you can add more units later in Settings)</label>
           <input
-            type="password"
+            value={unitName}
+            maxLength={40}
+            onChange={(e) => setUnitName(e.target.value)}
+          />
+        </div>
+      )}
+      {!creating && unitList.length > 1 && (
+        <div className="field">
+          <label>Unit</label>
+          <select value={unitId} onChange={(e) => setUnitId(e.target.value)}>
+            {unitList.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.display}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {!creating && unitList.length === 1 && (
+        <p className="muted">{unitList[0].display}</p>
+      )}
+      {mode === "recover" && (
+        <div className="field">
+          <label>Recovery key</label>
+          <input
+            value={rk}
+            onChange={(e) => setRk(e.target.value)}
+            className="mono"
+          />
+        </div>
+      )}
+      <div className="field">
+        <label>{mode === "recover" ? "New password" : "Password"}</label>
+        <div className="pw-wrap">
+          <input
+            type={showPw ? "text" : "password"}
             autoFocus
             value={pw}
             onChange={(e) => setPw(e.target.value)}
-            onKeyDown={(e) =>
-              e.key === "Enter" && !creating && mode === "main" && submit()
-            }
+            onKeyDown={(e) => {
+              setCaps(e.getModifierState("CapsLock"));
+              if (e.key === "Enter" && !creating && mode === "main") submit();
+            }}
+            onKeyUp={(e) => setCaps(e.getModifierState("CapsLock"))}
+            onBlur={() => setCaps(false)}
+          />
+          <button
+            type="button"
+            className="pw-eye"
+            tabIndex={-1}
+            aria-label={showPw ? "Hide password" : "Show password"}
+            aria-pressed={showPw}
+            onClick={() => setShowPw((v) => !v)}
+          >
+            <Icon name={showPw ? "eyeOff" : "eye"} />
+          </button>
+        </div>
+        {caps && <p className="caps-warn">Caps Lock is on</p>}
+      </div>
+      {(creating || mode === "recover") && (
+        <div className="field">
+          <label>Confirm password</label>
+          <input
+            type={showPw ? "text" : "password"}
+            value={pw2}
+            onChange={(e) => setPw2(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
           />
         </div>
-        {(creating || mode === "recover") && (
-          <div className="field">
-            <label>Confirm password</label>
-            <input
-              type="password"
-              value={pw2}
-              onChange={(e) => setPw2(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
-            />
-          </div>
-        )}
-        {err && <p className="error">{err}</p>}
-        <button className="primary" disabled={busy} onClick={submit}>
-          {creating
-            ? "Create"
-            : mode === "recover"
-              ? "Reset & unlock"
-              : "Unlock"}
-        </button>
-        {!creating && (
-          <p style={{ marginTop: 12 }}>
-            <a
-              href="#"
-              onClick={(e) => {
-                e.preventDefault();
-                setErr("");
-                setMode(mode === "recover" ? "main" : "recover");
-              }}
-            >
-              {mode === "recover" ? "Back" : "Forgot password?"}
-            </a>
-          </p>
-        )}
-      </div>
-    </div>
+      )}
+      {err && <p className="error">{err}</p>}
+      <button className="primary" disabled={busy} onClick={submit}>
+        {creating ? "Create" : mode === "recover" ? "Reset & unlock" : "Unlock"}
+      </button>
+      {!creating && (
+        <p style={{ marginTop: 12 }}>
+          <a
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              setErr("");
+              setMode(mode === "recover" ? "main" : "recover");
+            }}
+          >
+            {mode === "recover" ? "Back" : "Forgot password?"}
+          </a>
+        </p>
+      )}
+    </LoginShell>
   );
 }

@@ -13,7 +13,7 @@ import TemplatesScreen from "./screens/TemplatesScreen";
 import SettingsScreen from "./screens/SettingsScreen";
 import NameDialog from "./components/NameDialog";
 import { Toast, useToast } from "./components/Toast";
-import { applyTheme } from "./lib/theme";
+import { applyTheme, applyThemeHint, saveThemeHint } from "./lib/theme";
 import Icon, { type IconName } from "./components/Icon";
 import AskDialog from "./components/AskDialog";
 
@@ -62,6 +62,7 @@ export default function App() {
     setTheme(th ?? "light");
     setDensity(de ?? "comfortable");
     applyTheme(th, de);
+    saveThemeHint(th ?? "light"); // keeps the hint in sync with the unit just unlocked
   }, []);
   const loadUnit = useCallback(async () => {
     setUnit(await window.api.units.current());
@@ -102,6 +103,7 @@ export default function App() {
     setTheme(t);
     setDensity(d);
     applyTheme(t, d);
+    saveThemeHint(t);
     window.api.prefs.set("theme", t);
     window.api.prefs.set("density", d);
   };
@@ -111,6 +113,7 @@ export default function App() {
   };
   const lock = async () => {
     await window.api.vault.lock();
+    applyThemeHint();
     setState("locked");
     setTab("entry");
     setCount(0);

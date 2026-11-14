@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="100%" stop-color="#1E293B" />
+    </linearGradient>
+
+    <linearGradient id="emeraldGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#059669" />
+      <stop offset="100%" stop-color="#34D399" />
+    </linearGradient>
+
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#2563EB" />
+    </linearGradient>
+
+    <filter id="softShadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#000000" flood-opacity="0.35" />
+    </filter>
+  </defs>
+
+  <rect x="16" y="16" width="224" height="224" rx="52" fill="url(#bgGrad)" />
+  <rect x="17" y="17" width="222" height="222" rx="51" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="2" />
+
+  <g filter="url(#softShadow)">
+    <rect x="74" y="54" width="116" height="140" rx="16" fill="#334155" transform="rotate(6 132 124)" />
+    <rect x="64" y="62" width="116" height="140" rx="16" fill="#F8FAFC" />
+    <path d="M80 62 H86 V202 H80 C71.163 202 64 194.837 64 186 V78 C64 69.163 71.163 62 80 62 Z" fill="url(#blueGrad)" />
+
+    <rect x="98" y="86" width="44" height="8" rx="4" fill="#CBD5E1" />
+    <rect x="150" y="86" width="16" height="8" rx="4" fill="#10B981" />
+
+    <rect x="98" y="106" width="36" height="8" rx="4" fill="#CBD5E1" />
+    <rect x="142" y="106" width="24" height="8" rx="4" fill="#10B981" />
+
+    <rect x="98" y="126" width="48" height="8" rx="4" fill="#CBD5E1" />
+    <rect x="154" y="126" width="12" height="8" rx="4" fill="#38BDF8" />
+
+    <rect x="98" y="152" width="68" height="32" rx="6" fill="#ECFDF5" />
+    <rect x="108" y="168" width="10" height="10" rx="2" fill="#34D399" />
+    <rect x="123" y="162" width="10" height="16" rx="2" fill="#10B981" />
+    <rect x="138" y="157" width="10" height="21" rx="2" fill="#059669" />
+    <path d="M154 171 L159 164 L162 167" fill="none" stroke="#059669" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+
+  <g filter="url(#softShadow)">
+    <circle cx="182" cy="182" r="28" fill="url(#emeraldGrad)" />
+    <circle cx="182" cy="182" r="26" fill="none" stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="1.5" />
+    <path d="M185 167 L173 183 H182 L179 197 L191 181 H182 L185 167 Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round" />
+  </g>
+</svg>

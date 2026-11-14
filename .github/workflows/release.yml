@@ -22,6 +22,11 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npx electron-vite build
-      - run: npx electron-builder --win --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npx electron-builder --win --publish never
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest.yml
+          fail_on_unmatched_files: true

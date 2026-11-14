@@ -11,6 +11,7 @@ function createWindow() {
     minWidth: 1080,
     minHeight: 640,
     show: false,
+    title: `BookKeeper ${app.getVersion()}`,
     autoHideMenuBar: true,
     backgroundColor: "#f3f4f7",
     webPreferences: {
@@ -21,6 +22,7 @@ function createWindow() {
     },
   });
   win.once("ready-to-show", () => win.show());
+  win.on("page-title-updated", (e) => e.preventDefault()); // keep the version in the title instead of the page's <title>
   // Offline app: never navigate away or open new windows from inside the app.
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://")) shell.openExternal(url);

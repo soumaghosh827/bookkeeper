@@ -8,6 +8,7 @@ asarUnpack:
   - node_modules/better-sqlite3-multiple-ciphers/**
 win:
   target: nsis
+  icon: resources/icon.png
 publish:
   provider: github
   owner: soumaghosh827
@@ -16,3 +17,4 @@ publish:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-Setup-${version}.${ext}

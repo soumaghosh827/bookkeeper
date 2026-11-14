@@ -1,7 +1,7 @@
 {
   "name": "bookkeeper",
   "productName": "BookKeeper",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Offline bulk transaction entry with Excel and Word output",
   "author": "soumaghosh827",
   "repository": {

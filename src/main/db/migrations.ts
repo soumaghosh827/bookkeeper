@@ -84,6 +84,8 @@ CREATE TABLE templates (
   updated_at TEXT NOT NULL
 );
 
+CREATE UNIQUE INDEX idx_templates_name ON templates(name COLLATE NOCASE);
+
 CREATE TABLE template_texts (
   template_id INTEGER NOT NULL REFERENCES templates(id) ON DELETE CASCADE,
   key TEXT NOT NULL,

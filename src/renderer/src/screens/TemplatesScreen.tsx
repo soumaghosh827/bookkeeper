@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DEFAULT_PLAN } from "@shared/types";
 import type {
   OutputPlan,
@@ -64,11 +64,21 @@ export default function TemplatesScreen({
   const [askDel, setAskDel] = useState(false);
   const [saved, setSaved] = useState(""); // snapshot of the last loaded or saved state; "" while loading
   const [leave, setLeave] = useState<(() => void) | null>(null); // what to do once the user agrees to discard edits
+  const [draft, setDraft] = useState(false); // a new template that exists only on screen until Save
+  const [staged, setStaged] = useState<{
+    name: string;
+    data: Uint8Array;
+  } | null>(null); // Word file picked but not stored until Save
+  const busy = useRef(false); // blocks a double click on Save
+  const newId = useRef<number | null>(null); // row created by a Save of a draft that failed halfway, so a retry updates it
 
   const { toast, show, hide } = useToast();
   const cur = list.find((t) => t.id === sel) ?? null;
   const dirty =
-    !!cur && saved !== "" && snap(name, desc, texts, plan) !== saved;
+    (!!cur || draft) &&
+    ((saved !== "" && snap(name, desc, texts, plan) !== saved) || !!staged);
+  const canSave = draft || dirty;
+  const hasFile = !!staged || !!cur?.has_file;
   const guarded = (go: () => void) => (dirty ? setLeave(() => go) : go());
 
   useEffect(() => {
@@ -95,9 +105,12 @@ export default function TemplatesScreen({
     setName(t?.name ?? "");
     setDesc(t?.description ?? "");
     setSaved("");
+    setStaged(null);
     if (!sel) {
       setTexts([]);
       setPlan(DEFAULT_PLAN);
+      setCustomMode(false);
+      setSaved(draft ? snap("", "", [], DEFAULT_PLAN) : "");
       return;
     }
     let stale = false;
@@ -116,48 +129,88 @@ export default function TemplatesScreen({
     };
   }, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function create() {
-    const r = await window.api.templates.save({
-      name: "New template",
-      description: "",
-    });
-    if (r.ok) {
-      await load(r.data!.id);
-      setSel(r.data!.id);
-    } else show(r.error ?? "Failed", { tone: "error" });
+  function create() {
+    newId.current = null;
+    setDraft(true);
+    setStaged(null);
+    setName("");
+    setDesc("");
+    setTexts([]);
+    setPlan(DEFAULT_PLAN);
+    setCustomMode(false);
+    setSaved(snap("", "", [], DEFAULT_PLAN));
+    setSel(null);
+  }
+
+  function dropDraft() {
+    newId.current = null;
+    setDraft(false);
+    setStaged(null);
+    setName("");
+    setDesc("");
+    setTexts([]);
+    setPlan(DEFAULT_PLAN);
+    setSaved("");
+    setSel(list[0]?.id ?? null);
   }
 
   async function save() {
-    if (!sel) return;
-    const a = await window.api.templates.save({
-      id: sel,
-      name,
-      description: desc,
-    });
-    if (!a.ok) return show(a.error ?? "Failed", { tone: "error" });
+    if (!canSave || busy.current) return;
     const cleanTexts = texts
       .filter((t) => t.key.trim())
       .map((t) => ({ key: t.key.trim(), value: t.value }));
-    const b = await window.api.templates.setTexts(sel, cleanTexts);
-    if (!b.ok) return show(b.error ?? "Failed", { tone: "error" });
-    const c = await window.api.templates.setPlan(sel, plan);
-    if (!c.ok) return show(c.error ?? "Failed", { tone: "error" });
-    setName(a.data!.name);
-    setDesc(a.data!.description);
-    setTexts(cleanTexts);
-    setPlan(c.data!);
-    setSaved(snap(a.data!.name, a.data!.description, cleanTexts, c.data!));
-    await load(sel);
-    show("Saved");
+    // Check the saved texts first, so a new template is never half-created by a bad key.
+    const seen = new Set<string>();
+    for (const t of cleanTexts) {
+      if (!/^[a-z][a-z0-9_]{0,39}$/.test(t.key))
+        return show(
+          `Invalid key "${t.key}": use lowercase letters, digits and _`,
+          { tone: "error" },
+        );
+      if (seen.has(t.key))
+        return show(`Duplicate key "${t.key}"`, { tone: "error" });
+      seen.add(t.key);
+    }
+    busy.current = true;
+    try {
+      const a = await window.api.templates.save({
+        id: (draft ? newId.current : sel) ?? undefined,
+        name,
+        description: desc,
+      });
+      if (!a.ok) return show(a.error ?? "Failed", { tone: "error" });
+      const id = a.data!.id;
+      if (draft) newId.current = id; // a retry after a later failure updates this row instead of creating another
+      const b = await window.api.templates.setTexts(id, cleanTexts);
+      if (!b.ok) return show(b.error ?? "Failed", { tone: "error" });
+      const c = await window.api.templates.setPlan(id, plan);
+      if (!c.ok) return show(c.error ?? "Failed", { tone: "error" });
+      if (staged) {
+        const f = await window.api.templates.setFile(id, staged.data);
+        if (!f.ok) return show(f.error ?? "Failed", { tone: "error" });
+      }
+      setName(a.data!.name);
+      setDesc(a.data!.description);
+      setTexts(cleanTexts);
+      setPlan(c.data!);
+      setStaged(null);
+      setSaved(snap(a.data!.name, a.data!.description, cleanTexts, c.data!));
+      await load(id);
+      if (draft) {
+        newId.current = null;
+        setDraft(false);
+        setSel(id);
+      }
+      show("Saved");
+    } finally {
+      busy.current = false;
+    }
   }
 
-  async function upload() {
-    if (!sel) return;
-    const r = await window.api.templates.uploadFile(sel);
-    if (r.ok) {
-      await load(sel);
-      show("Word file stored in the encrypted database");
-    } else if (r.error !== "Cancelled")
+  async function pickWord() {
+    const r = await window.api.templates.pickFile();
+    if (r.ok) setStaged(r.data!);
+    else if (r.error !== "Cancelled")
       show(r.error ?? "Failed", { tone: "error" });
   }
 
@@ -203,9 +256,17 @@ export default function TemplatesScreen({
             value={sel ?? ""}
             onChange={(e) => {
               const id = Number(e.target.value);
-              guarded(() => setSel(id));
+              guarded(() => {
+                setDraft(false);
+                setSel(id);
+              });
             }}
           >
+            {draft && (
+              <option value="" disabled>
+                New template (not saved)
+              </option>
+            )}
             {list.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
@@ -218,19 +279,19 @@ export default function TemplatesScreen({
         {dirty && <span className="tplflag">Unsaved changes</span>}
         <button
           className="danger"
-          disabled={!cur}
-          onClick={() => setAskDel(true)}
+          disabled={!cur && !draft}
+          onClick={() => (draft ? guarded(dropDraft) : setAskDel(true))}
         >
-          Delete
+          {draft ? "Discard" : "Delete"}
         </button>
-        <button className="primary" disabled={!dirty} onClick={save}>
+        <button className="primary" disabled={!canSave} onClick={save}>
           Save changes
         </button>
         <button onClick={() => guarded(create)}>New template</button>
       </div>
 
       <div className="split">
-        {cur ? (
+        {cur || draft ? (
           <div className="panel tplpanel">
             <div className="body">
               <div className="tplcols">
@@ -258,15 +319,15 @@ export default function TemplatesScreen({
                     <div
                       style={{ display: "flex", gap: 8, alignItems: "center" }}
                     >
-                      <button onClick={upload}>
-                        {cur.has_file
-                          ? "Replace Word file…"
-                          : "Upload Word file…"}
+                      <button onClick={pickWord}>
+                        {hasFile ? "Replace Word file…" : "Upload Word file…"}
                       </button>
                       <small>
-                        {cur.has_file
-                          ? "A .docx is stored. Design letterhead, fonts and margins in Word."
-                          : "Upload a .docx designed in Word, with placeholders in curly braces."}
+                        {staged
+                          ? `${staged.name} is ready and will be stored when you click Save changes.`
+                          : cur?.has_file
+                            ? "A .docx is stored. Design letterhead, fonts and margins in Word."
+                            : "Upload a .docx designed in Word, with placeholders in curly braces."}
                       </small>
                     </div>
                   </div>
@@ -398,7 +459,7 @@ export default function TemplatesScreen({
                 <aside className="tplside">
                   <PlanPreview
                     plan={plan}
-                    templateName={name.trim() || cur.name}
+                    templateName={name.trim() || cur?.name || "New template"}
                   />
                 </aside>
               </div>

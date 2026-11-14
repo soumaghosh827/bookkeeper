@@ -1,6 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from "electron";
 import { existsSync, readFileSync, writeFileSync } from "fs";
-import { join } from "path";
+import { basename, join } from "path";
 import { vault } from "./vault";
 import { units, unitDisplayName, type Unit } from "./units";
 import type { Result, UnitInfo } from "@shared/types";
@@ -288,7 +288,8 @@ export function registerIpc() {
   // ---- templates & reports ----
   H("tpl:list", () => tpl.listTemplates(db()));
   H("tpl:save", (_e, t) => run(() => tpl.saveTemplate(db(), t)));
-  H("tpl:upload", (_e, id: number) =>
+  // Picks and validates a .docx but stores nothing; the screen keeps it until Save.
+  H("tpl:pickFile", () =>
     runAsync(async () => {
       const r = await openDlg({
         title: "Select Word template",
@@ -296,8 +297,19 @@ export function registerIpc() {
         properties: ["openFile"],
       });
       if (r.canceled || !r.filePaths[0]) return CANCELLED;
-      return tpl.setTemplateFile(db(), id, readFileSync(r.filePaths[0]));
+      const data = readFileSync(r.filePaths[0]);
+      if (data.length > 20 * 1024 * 1024)
+        return { ok: false as const, error: "File is larger than 20 MB" };
+      tpl.checkDocx(data);
+      return {
+        ok: true as const,
+        data: { name: basename(r.filePaths[0]), data },
+      };
     }),
+  );
+  // Stores a previously picked file against a saved template.
+  H("tpl:setFile", (_e, id: number, data: Uint8Array) =>
+    run(() => tpl.setTemplateFile(db(), id, Buffer.from(data))),
   );
   H("tpl:remove", (_e, id) => run(() => tpl.removeTemplate(db(), id)));
   H("tpl:getTexts", (_e, id) => tpl.getTexts(db(), id));

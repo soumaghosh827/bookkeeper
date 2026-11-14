@@ -694,7 +694,8 @@ export interface BookkeeperApi {
       name: string;
       description: string;
     }): Promise<Result<Template>>;
-    uploadFile(id: number): Promise<Result<Template>>;
+    pickFile(): Promise<Result<{ name: string; data: Uint8Array }>>;
+    setFile(id: number, data: Uint8Array): Promise<Result<Template>>;
     remove(id: number): Promise<Result>;
     getTexts(id: number): Promise<TemplateText[]>;
     setTexts(id: number, texts: TemplateText[]): Promise<Result>;

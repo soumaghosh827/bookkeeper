@@ -79,7 +79,8 @@ const api: BookkeeperApi = {
   templates: {
     list: () => inv("tpl:list"),
     save: (t) => inv("tpl:save", t),
-    uploadFile: (id) => inv("tpl:upload", id),
+    pickFile: () => inv("tpl:pickFile"),
+    setFile: (id, data) => inv("tpl:setFile", id, data),
     remove: (id) => inv("tpl:remove", id),
     getTexts: (id) => inv("tpl:getTexts", id),
     setTexts: (id, t) => inv("tpl:setTexts", id, t),

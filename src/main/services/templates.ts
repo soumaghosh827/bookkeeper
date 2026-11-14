@@ -38,6 +38,13 @@ export function saveTemplate(
   const description = String(t.description ?? "")
     .trim()
     .slice(0, 300);
+  const clash = db
+    .prepare(
+      "SELECT 1 FROM templates WHERE name = ? COLLATE NOCASE AND id != ?",
+    )
+    .get(name, t.id ?? 0);
+  if (clash)
+    return { ok: false, error: `A template named "${name}" already exists` };
   const now = new Date().toISOString();
   if (t.id) {
     db.prepare(

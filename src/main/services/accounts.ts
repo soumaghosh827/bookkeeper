@@ -250,7 +250,7 @@ const LOCKED_ACCOUNT_KEYS = [
   "ifsc",
 ] as const;
 
-/** Edits the locked fields. Free within 48h of creation; after that it needs the password and a reason. */
+/** Edits the locked fields. Free within LOCK_DAYS of creation; after that it needs the password and a reason. */
 export function correctAccount(
   db: DB,
   id: string,

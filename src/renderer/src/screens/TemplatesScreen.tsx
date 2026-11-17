@@ -20,23 +20,15 @@ import { Toast, useToast } from "@/components/Toast";
 const PLACEHOLDERS: [string, string][] = [
   [
     "{total} {total_words} {count} {today} {ref_no}",
-    "Totals worked out by the app, plus the report’s Date ({today}) and Reference no ({ref_no}) as entered in the list panel. {today} is the report date, which is today unless you change it",
+    "Totals worked out by the app, plus the report’s Date ({today}) and Reference no ({ref_no}) as entered in the list panel. {today} is the report date, which is today unless you change it. The app adds “Rs.” before {total} and “Rupees” before {total_words} itself, so don’t type them",
   ],
   [
     "{payee} {bank} {branch} {account_no} {ifsc} {amount} {amount_words} {date} {reference_no} {utr} {notes}",
-    "Details of the FIRST transaction in the list (useful for a letter about one payment)",
+    "Details of the FIRST transaction in the list (useful for a letter about one payment). The app adds “Rs.” before {amount} and “Rupees” before {amount_words} itself, so don’t type them",
   ],
   [
     "{@table}",
     "The table built by the app. Put it alone in its own paragraph where the table should go (after the signatory for the two-page layout). Without it the table goes at the end of the letter",
-  ],
-  [
-    "{#items} … {/items}",
-    "Put the start tag in the first cell and the end tag in the last cell of ONE table row; that row repeats for every transaction",
-  ],
-  [
-    "{sno} {payee} {bank} {branch} {account_no} {ifsc} {amount} {reference_no} {date} {utr} {notes}",
-    "Inside the repeating row: values of each transaction",
   ],
   [
     "Your own texts, e.g. {signatory_name}",
@@ -68,6 +60,7 @@ export default function TemplatesScreen({
   const [staged, setStaged] = useState<{
     name: string;
     data: Uint8Array;
+    warnings: string[];
   } | null>(null); // Word file picked but not stored until Save
   const busy = useRef(false); // blocks a double click on Save
   const newId = useRef<number | null>(null); // row created by a Save of a draft that failed halfway, so a retry updates it
@@ -330,6 +323,11 @@ export default function TemplatesScreen({
                             : "Upload a .docx designed in Word, with placeholders in curly braces."}
                       </small>
                     </div>
+                    {staged?.warnings.map((w, i) => (
+                      <div key={i} className="notice" style={{ marginTop: 6 }}>
+                        {w}
+                      </div>
+                    ))}
                   </div>
 
                   <h3 style={{ marginTop: 16 }}>Output layout</h3>

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { CORRECT_FREE_HOURS, canCorrectFreely } from "@shared/rules";
+import { LOCK_DAYS, canCorrectFreely } from "@shared/rules";
 import Modal from "./Modal";
 
 export interface CorrectAuth {
@@ -106,8 +106,8 @@ export default function CorrectDialog({
       {needsAuth && (
         <>
           <div className="notice" style={{ marginBottom: 8 }}>
-            This {noun} is more than {CORRECT_FREE_HOURS} hours old. Enter a
-            reason and your password. The change is recorded in its history.
+            This {noun} is more than {LOCK_DAYS} days old. Enter a reason and
+            your password. The change is recorded in its history.
           </div>
           <div className="field">
             <label>Reason</label>

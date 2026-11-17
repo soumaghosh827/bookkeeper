@@ -5,12 +5,14 @@ import {
   type AccountInput,
   type CustomColumn,
   type Labels,
+  type SearchKey,
 } from "@shared/types";
 import DataGrid, { type GridCol } from "@/components/DataGrid";
 import NameDialog from "@/components/NameDialog";
 import Icon from "@/components/Icon";
 import UndoImportButton from "@/components/UndoImportButton";
 import CorrectDialog from "@/components/CorrectDialog";
+import MasterMatchPanel from "@/components/MasterMatchPanel";
 import HistoryDialog from "@/components/HistoryDialog";
 import ImportPanel from "./ImportPanel";
 import { Toast, useToast } from "@/components/Toast";
@@ -67,6 +69,36 @@ export default function MasterScreen({
     { oneOff },
     refreshKey,
   );
+
+  // "Already in Master": search the field being typed in, ~200 ms after the last keystroke
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [match, setMatch] = useState<{
+    field: SearchKey;
+    text: string;
+    items: Account[];
+  } | null>(null);
+  const reqId = useRef(0); // lets a slow answer be ignored once a newer keystroke has happened
+  useEffect(() => {
+    const field = focusKey as SearchKey | null;
+    const min =
+      field === "payee"
+        ? 2
+        : field === "account_no" || field === "ifsc"
+          ? 3
+          : 0;
+    let t = field ? form[field].trim() : "";
+    if (field === "account_no") t = t.replace(/\s/g, ""); // stored account numbers have no spaces
+    const id = ++reqId.current;
+    if (oneOff || !field || !min || t.length < min) {
+      setMatch(null);
+      return undefined;
+    }
+    const h = window.setTimeout(async () => {
+      const items = await window.api.accounts.search(field, t);
+      if (id === reqId.current) setMatch({ field, text: t, items });
+    }, 200);
+    return () => window.clearTimeout(h);
+  }, [form, focusKey, oneOff]);
 
   const loadCustom = () =>
     window.api.customColumns.list("account").then(setCustom);
@@ -241,35 +273,72 @@ export default function MasterScreen({
 
       {!oneOff && (
         <div
-          className="addbar"
-          onKeyDown={(e) => e.key === "Enter" && addWithAction()}
+          className="mm-wrap"
+          onFocus={(e) =>
+            setFocusKey((e.target as HTMLElement).dataset.k ?? null)
+          }
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+              setFocusKey(null);
+          }}
         >
-          {ACCOUNT_KEYS.map((k, i) => (
-            <div className="field" key={k}>
-              <label>
-                {labels[k]}
-                {k === "payee" ? " *" : ""}
-              </label>
-              <input
-                ref={i === 0 ? first : undefined}
-                value={form[k]}
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    [k]:
-                      k === "ifsc"
-                        ? e.target.value.toUpperCase()
-                        : e.target.value,
-                  }))
-                }
-              />
-            </div>
-          ))}
-          <button className="primary" onClick={addWithAction}>
-            Add
-          </button>
+          <div
+            className="addbar"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addWithAction();
+              else if (e.key === "Escape" && match) {
+                reqId.current++;
+                setMatch(null);
+              }
+            }}
+          >
+            {ACCOUNT_KEYS.map((k, i) => (
+              <div className="field" key={k}>
+                <label>
+                  {labels[k]}
+                  {k === "payee" ? " *" : ""}
+                </label>
+                <input
+                  ref={i === 0 ? first : undefined}
+                  data-k={k}
+                  value={form[k]}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      [k]:
+                        k === "ifsc"
+                          ? e.target.value.toUpperCase()
+                          : e.target.value,
+                    }))
+                  }
+                />
+              </div>
+            ))}
+            <button className="primary" onClick={addWithAction}>
+              Add
+            </button>
+          </div>
+          {match && match.items.length > 0 && (
+            <MasterMatchPanel
+              items={match.items}
+              field={match.field}
+              text={match.text}
+              typed={{
+                payee: form.payee,
+                account_no: form.account_no,
+                ifsc: form.ifsc,
+              }}
+              labels={labels}
+              masterName={title}
+              onPick={(a) => {
+                reqId.current++;
+                setMatch(null);
+                showExisting.run(a);
+              }}
+            />
+          )}
         </div>
       )}
 

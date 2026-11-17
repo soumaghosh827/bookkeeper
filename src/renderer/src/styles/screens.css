@@ -16,6 +16,72 @@
   margin: 0;
 }
 
+/* "Already in Master": dropdown under the add bar, so the grid below never jumps while typing */
+.mm-wrap {
+  position: relative;
+  flex: none;
+}
+.mm {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 3px);
+  z-index: 40;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.mm-title {
+  padding: 5px var(--sp-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.mm-row {
+  display: grid;
+  grid-template-columns: 1.5fr 1.25fr 1.15fr 1fr 0.9fr 1.3fr;
+  gap: var(--sp-3);
+  padding: 7px var(--sp-3);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  align-items: center;
+}
+.mm-row > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mm-row + .mm-row {
+  border-top: 1px solid var(--border);
+}
+.mm-row:hover {
+  background: var(--brand-soft);
+}
+.mm-row.mm-head {
+  cursor: default;
+  background: var(--surface-2);
+  color: var(--text-faint);
+  font-weight: var(--fw-medium);
+}
+.mm-row.mm-head:hover {
+  background: var(--surface-2);
+}
+.mm-flag {
+  color: var(--warn);
+  font-weight: var(--fw-medium);
+}
+.mm-foot {
+  padding: 5px var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+}
+
 /* ----- Entry ----- */
 .entry {
   flex: 1;

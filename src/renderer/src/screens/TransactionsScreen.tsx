@@ -7,7 +7,7 @@ import {
   type TxChanges,
   type TxRow,
 } from "@shared/types";
-import { canDelete } from "@shared/rules";
+import { LOCK_DAYS, canDelete } from "@shared/rules";
 import { fmtDate, formatPaise, parseAmount, parseDate } from "@shared/format";
 import DataGrid, { type GridCol } from "@/components/DataGrid";
 import NameDialog from "@/components/NameDialog";
@@ -357,7 +357,7 @@ export default function TransactionsScreen({
                     title={
                       canDelete(r.created_at)
                         ? "Delete"
-                        : "Locked: older than 2 days"
+                        : `Locked: older than ${LOCK_DAYS} days`
                     }
                     onClick={() => setDelRow(r)}
                   >
@@ -490,8 +490,8 @@ export default function TransactionsScreen({
             {formatPaise(delRow.amount_paise)} · {fmtDate(delRow.entry_date)}
           </p>
           <p className="muted">
-            Deleting is only possible within 2 days of creation. It is removed
-            from the report list too.
+            Deleting is only possible within {LOCK_DAYS} days of creation. It is
+            removed from the report list too.
           </p>
         </AskDialog>
       )}

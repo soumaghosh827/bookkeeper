@@ -33,6 +33,16 @@ export const formatPaise = (p: number | null) =>
         maximumFractionDigits: 2,
       });
 
+/** "Rs. 34.00". Empty string when there is no amount, so a blank never prints a lone "Rs.". */
+export const formatRs = (p: number | null) =>
+  p == null ? "" : "Rs. " + formatPaise(p);
+
+/** Amount column header: appends " (Rs.)" unless it already says Rs, ₹ or Rupee. Other columns pass through. */
+export const tableHeader = (key: string, header: string) =>
+  key === "amount" && !/\brs\b|₹|rupee/i.test(header)
+    ? `${header} (Rs.)`
+    : header;
+
 export type ParsedAmount = { ok: true; paise: number | null } | { ok: false };
 export function parseAmount(s: string): ParsedAmount {
   const t = s.replace(/[,\s₹]/g, "");
@@ -90,7 +100,7 @@ const below1000 = (n: number) => {
 export function rupeesInWords(paise: number): string {
   let n = Math.floor(paise / 100);
   const ps = paise % 100;
-  if (n === 0 && ps === 0) return "Zero Rupees";
+  if (n === 0 && ps === 0) return "Rupees Zero Only";
   const cr = Math.floor(n / 1e7);
   n %= 1e7;
   const lakh = Math.floor(n / 1e5);
@@ -105,10 +115,12 @@ export function rupeesInWords(paise: number): string {
     th ? below100(th) + " Thousand" : "",
     n ? below1000(n) : "",
   ].filter(Boolean);
-  return `${parts.join(" ") || "Zero"} Rupees${ps ? " and " + below100(ps) + " Paise" : ""} Only`;
+  const rupees = parts.join(" ");
+  const paiseWords = ps ? `${below100(ps)} Paise` : "";
+  if (!rupees) return `${paiseWords} Only`; // paise only, e.g. "Twenty Five Paise Only"
+  return `Rupees ${rupees}${paiseWords ? " and " + paiseWords : ""} Only`;
 }
 
-
-const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/
-export const isValidIfsc = (s: string) => IFSC_RE.test(s)
-export const cleanIfsc = (s: string) => s.replace(/\s/g, '').toUpperCase()
+const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+export const isValidIfsc = (s: string) => IFSC_RE.test(s);
+export const cleanIfsc = (s: string) => s.replace(/\s/g, "").toUpperCase();

@@ -55,6 +55,7 @@ type Report = {
   already: number;
   title?: string;
   names: Record<string, string>; // output id -> editable file name
+  warnings: string[]; // template lint (never blocks)
 };
 
 export default function EntryScreen({
@@ -389,8 +390,10 @@ export default function EntryScreen({
     );
     if (!r.ok) return show(r.error ?? "Could not generate", { tone: "error" });
     window.api.prefs.set("last_template", String(tplId));
+    const warnings = await window.api.templates.lint(tplId);
     setReport({
       prepared: r.data!,
+      warnings,
       record: true,
       busy: false,
       already: rows.filter((x) => x.report_count > 0).length,
@@ -839,9 +842,13 @@ export default function EntryScreen({
                   {report.already} of these already have a saved report.
                 </p>
               )}
+              {report.warnings.map((w, i) => (
+                <p key={i} className="notice">
+                  {w}
+                </p>
+              ))}
               <p className="muted">
-                Nothing is written until you choose a location. with: Nothing is
-                written until you choose a{" "}
+                Nothing is written until you choose a{" "}
                 {report.prepared.files.length > 1 ? "folder" : "location"}.
               </p>
               <div className="field" style={{ marginTop: 12 }}>

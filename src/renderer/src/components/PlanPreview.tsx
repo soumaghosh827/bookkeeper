@@ -1,5 +1,6 @@
 import type { OutputPlan, TablePlacement } from "@shared/types";
 import { summarizePlan } from "@shared/planSummary";
+import { tableHeader } from "@shared/format";
 
 /** The table as it will look: your column headers, two sample rows, and the GRAND TOTAL row. `title` adds the optional title bar above it. */
 function SketchTable({ plan, title }: { plan: OutputPlan; title?: boolean }) {
@@ -12,7 +13,7 @@ function SketchTable({ plan, title }: { plan: OutputPlan; title?: boolean }) {
         <thead>
           <tr>
             {cols.map((c) => (
-              <th key={c.key}>{c.header}</th>
+              <th key={c.key}>{tableHeader(c.key, c.header)}</th>
             ))}
           </tr>
         </thead>

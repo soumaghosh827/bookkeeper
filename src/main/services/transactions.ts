@@ -12,7 +12,12 @@ import {
   type TxHistoryEntry,
   type TxRow,
 } from "@shared/types";
-import { HIGH_VALUE_PAISE, canCorrectFreely, canDelete } from "@shared/rules";
+import {
+  HIGH_VALUE_PAISE,
+  LOCK_DAYS,
+  canCorrectFreely,
+  canDelete,
+} from "@shared/rules";
 import { parseDate } from "@shared/format";
 import { FieldError } from "./errors";
 import { audit, rowHistory } from "./audit";
@@ -355,7 +360,7 @@ export interface CorrectAuth {
   reason?: string;
 }
 
-/** Corrects amount / date / reference. Free within 48h of creation; after that it needs the password and a reason. */
+/** Corrects amount / date / reference. Free within LOCK_DAYS of creation; after that it needs the password and a reason. */
 export function correctTransaction(
   db: DB,
   uid: string,
@@ -390,8 +395,7 @@ export function removeTransaction(db: DB, uid: string): Result {
   if (!canDelete(cur.created_at))
     return {
       ok: false,
-      error:
-        "Locked: transactions can only be deleted within 2 days of creation",
+      error: `Locked: transactions can only be deleted within ${LOCK_DAYS} days of creation`,
     };
   db.transaction(() => {
     db.prepare(

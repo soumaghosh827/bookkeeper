@@ -71,6 +71,48 @@ export function checkDocx(buf: Buffer) {
     throw new Error("This is not a valid Word template: " + explain(e));
   }
 }
+/** Warnings (never errors) for a template that types text the app now adds itself. Reads the body, headers and footers. */
+export function lintTemplate(buf: Buffer): string[] {
+  let text = "";
+  try {
+    const zip = new PizZip(buf);
+    const doc = new Docxtemplater(zip, {
+      paragraphLoop: true,
+      linebreaks: true,
+    });
+    for (const part of Object.keys(zip.files)) {
+      if (!/^word\/(document|header\d*|footer\d*)\.xml$/.test(part)) continue;
+      try {
+        text += doc.getFullText(part) + "\n";
+      } catch {
+        /* a part docxtemplater did not compile: skip it */
+      }
+    }
+  } catch {
+    return []; // checkDocx reports a broken file; lint stays silent
+  }
+  const out: string[] = [];
+  if (/\{\s*#\s*items\s*\}/.test(text))
+    out.push(
+      "Repeating rows ({#items} … {/items}) are no longer supported, so those rows will come out empty. Put {@table} in its own paragraph instead and delete the old table.",
+    );
+  if (/(?:\bRs\.?|₹)\s*\{\s*(?:amount|total)\s*\}/i.test(text))
+    out.push(
+      'A typed "Rs." or "₹" sits before {amount} or {total}. The app now adds "Rs." itself, so it would print twice. Delete the typed one.',
+    );
+  if (/\bRupees\s*\{\s*(?:amount_words|total_words)\s*\}/i.test(text))
+    out.push(
+      'A typed "Rupees" sits before {amount_words} or {total_words}. The app now adds "Rupees" itself, so it would print twice. Delete the typed one.',
+    );
+  return out;
+}
+
+/** Lint for the Word file stored on a template. */
+export function lintStoredTemplate(db: DB, id: number): string[] {
+  const f = getTemplateFile(db, id);
+  return f?.file ? lintTemplate(f.file) : [];
+}
+
 export function setTemplateFile(
   db: DB,
   id: number,

@@ -14,8 +14,10 @@ import {
 import {
   fmtDate,
   formatPaise,
+  formatRs,
   parseDate,
   rupeesInWords,
+  tableHeader,
   todayIso,
 } from "@shared/format";
 import { addReference, cleanRef } from "./txReferences";
@@ -29,7 +31,6 @@ import { buildTableXlsx } from "./tableExcel";
  *  - totals:                             {total} {total_words} {count} {today} {ref_no}
  *  - first transaction (single bills):   {payee} {bank} {branch} {account_no} {ifsc} {amount} {amount_words} {date} {reference_no} {utr} {notes}
  *  - the table built by the app:         {@table} alone in its own paragraph (placement and columns come from the template's output plan)
- *  - hand-made table (older method):     one template row wrapped in {#items} ... {/items}
  */
 interface PendingFile {
   id: string;
@@ -87,7 +88,10 @@ export function buildTableModel(
   const cols = plan.columns.filter((c) => c.on);
   const totalPaise = rows.reduce((n, r) => n + r.amount_paise, 0);
   return {
-    columns: cols.map((c) => ({ key: c.key, header: c.header })),
+    columns: cols.map((c) => ({
+      key: c.key,
+      header: tableHeader(c.key, c.header),
+    })),
     rows: rows.map((r, i) => cols.map((c) => CELL[c.key](r, i))),
     totalLabel: plan.totalLabel,
     total: formatPaise(totalPaise),
@@ -251,8 +255,8 @@ function renderDocx(
     /* only used to detect the markers */
   }
   doc.render(data);
-  // Old-style templates that draw their own {#items} table must not get a second table appended.
-  if (tableXml && !text.includes("{@table}") && !text.includes("{#items}"))
+  // Without a {@table} marker the table goes at the end of the letter.
+  if (tableXml && !text.includes("{@table}"))
     appendTableAtEnd(doc.getZip(), tableXml);
   return doc
     .getZip()
@@ -289,30 +293,30 @@ export async function prepare(
   if (!rows.length)
     return { ok: false, error: "None of these transactions exist any more" };
   const total = rows.reduce((n, r) => n + r.amount_paise, 0);
-  const items = rows.map((r, i) => ({
-    sno: i + 1,
-    payee: r.payee,
-    bank: r.bank,
-    branch: r.branch,
-    account_no: r.account_no,
-    ifsc: r.ifsc,
-    amount: formatPaise(r.amount_paise),
-    amount_words: rupeesInWords(r.amount_paise),
-    reference_no: r.reference_no,
-    date: fmtDate(r.entry_date),
-    utr: r.utr,
-    notes: r.notes,
-  }));
+  const r0 = rows[0]; // the first transaction feeds the single-bill placeholders
+  const first = {
+    sno: 1,
+    payee: r0.payee,
+    bank: r0.bank,
+    branch: r0.branch,
+    account_no: r0.account_no,
+    ifsc: r0.ifsc,
+    amount: formatRs(r0.amount_paise),
+    amount_words: rupeesInWords(r0.amount_paise),
+    reference_no: r0.reference_no,
+    date: fmtDate(r0.entry_date),
+    utr: r0.utr,
+    notes: r0.notes,
+  };
   const texts = Object.fromEntries(
     getTexts(db, templateId).map((t) => [t.key, t.value]),
   );
   const model = buildTableModel(rows, plan, title);
   const base = {
     ...texts,
-    ...items[0],
-    items,
+    ...first,
     count: rows.length,
-    total: formatPaise(total),
+    total: formatRs(total),
     total_words: rupeesInWords(total),
     today: fmtDate(repDate),
     ref_no: ref, // the report's own reference ('' when none was entered)

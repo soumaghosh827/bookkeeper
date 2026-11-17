@@ -303,7 +303,11 @@ export function registerIpc() {
       tpl.checkDocx(data);
       return {
         ok: true as const,
-        data: { name: basename(r.filePaths[0]), data },
+        data: {
+          name: basename(r.filePaths[0]),
+          data,
+          warnings: tpl.lintTemplate(data),
+        },
       };
     }),
   );
@@ -312,6 +316,7 @@ export function registerIpc() {
     run(() => tpl.setTemplateFile(db(), id, Buffer.from(data))),
   );
   H("tpl:remove", (_e, id) => run(() => tpl.removeTemplate(db(), id)));
+  H("tpl:lint", (_e, id: number) => tpl.lintStoredTemplate(db(), id));
   H("tpl:getTexts", (_e, id) => tpl.getTexts(db(), id));
   H("tpl:setTexts", (_e, id, t) => run(() => tpl.setTexts(db(), id, t)));
   H("tpl:getPlan", (_e, id: number) => tpl.getPlan(db(), id));

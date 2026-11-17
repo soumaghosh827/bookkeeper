@@ -15,11 +15,11 @@ import {
   formatPaise,
   parseAmount,
   parseDate,
-  rupeesInWords,
   todayIso,
 } from "@shared/format";
 import SuggestPanel from "@/components/SuggestPanel";
 import Modal from "@/components/Modal";
+import ReportDialog from "@/components/ReportDialog";
 import AskDialog from "@/components/AskDialog";
 import NameDialog from "@/components/NameDialog";
 import Icon from "@/components/Icon";
@@ -48,14 +48,11 @@ type Sug = {
 };
 type Report = {
   prepared: ReportPrepared;
-  record: boolean;
-  busy: boolean;
-  saved?: string;
-  err?: string;
   already: number;
-  title?: string;
-  names: Record<string, string>; // output id -> editable file name
   warnings: string[]; // template lint (never blocks)
+  uids: string[]; // frozen when Generate was pressed
+  refNo: string;
+  reportDate: string; // ISO
 };
 
 export default function EntryScreen({
@@ -394,36 +391,11 @@ export default function EntryScreen({
     setReport({
       prepared: r.data!,
       warnings,
-      record: true,
-      busy: false,
       already: rows.filter((x) => x.report_count > 0).length,
-      title: "",
-      names: Object.fromEntries(r.data!.files.map((f) => [f.id, f.fileName])),
+      uids: rows.map((x) => x.uid),
+      refNo: refNo.trim(),
+      reportDate: iso,
     });
-  }
-  async function saveReport() {
-    setReport((x) => x && { ...x, busy: true, err: undefined });
-    const p = await window.api.reports.prepare(
-      Number(tplId),
-      rows.map((x) => x.uid),
-      report!.title,
-      refNo.trim(),
-      parseDate(repDate) ?? "",
-    );
-    if (!p.ok)
-      return setReport((x) => x && { ...x, busy: false, err: p.error });
-    const r = await window.api.reports.save(report!.record, report!.names);
-    if (r.ok) setReport((x) => x && { ...x, busy: false, saved: r.data!.path });
-    else
-      setReport(
-        (x) =>
-          x && {
-            ...x,
-            busy: false,
-            err: r.error === "Cancelled" ? undefined : r.error,
-          },
-      );
-    if (r.ok) onTxChanged(); // "reports" column changed
   }
   const closeReport = () => {
     window.api.reports.discard();
@@ -778,130 +750,25 @@ export default function EntryScreen({
         />
       )}
       {report && (
-        <Modal
-          title={report.saved ? "Report saved" : "Generate report"}
-          onClose={report.busy ? undefined : closeReport}
-          actions={
-            report.saved ? (
-              <>
-                <button onClick={closeReport}>Keep list</button>
-                <button
-                  className="primary"
-                  onClick={async () => {
-                    await window.api.preview.clear();
-                    await reloadRows();
-                    onTxChanged();
-                    setRefNo("");
-                    setRepDate(fmtDate(todayIso()));
-                    closeReport();
-                  }}
-                >
-                  Clear list
-                </button>
-              </>
-            ) : (
-              <>
-                <button onClick={closeReport} disabled={report.busy}>
-                  Cancel
-                </button>
-                <button
-                  className="primary"
-                  autoFocus
-                  disabled={report.busy}
-                  onClick={saveReport}
-                >
-                  {report.prepared.files.length > 1
-                    ? "Choose folder…"
-                    : "Save as…"}
-                </button>
-              </>
-            )
-          }
-        >
-          {report.saved ? (
-            <>
-              <p className="notice ok">Saved to {report.saved}</p>
-              <p className="muted">
-                Clear the list to start the next batch, or keep it to generate
-                again.
-              </p>
-            </>
-          ) : (
-            <>
-              <p>
-                <strong>{report.prepared.templateName}</strong>
-              </p>
-              <p>
-                {report.prepared.count} transactions · total{" "}
-                <b>₹{formatPaise(report.prepared.total_paise)}</b>
-                <br />
-                <small>{rupeesInWords(report.prepared.total_paise)}</small>
-              </p>
-              {report.already > 0 && (
-                <p className="notice">
-                  {report.already} of these already have a saved report.
-                </p>
-              )}
-              {report.warnings.map((w, i) => (
-                <p key={i} className="notice">
-                  {w}
-                </p>
-              ))}
-              <p className="muted">
-                Nothing is written until you choose a{" "}
-                {report.prepared.files.length > 1 ? "folder" : "location"}.
-              </p>
-              <div className="field" style={{ marginTop: 12 }}>
-                <label>Table title (optional, centred above the table)</label>
-                <input
-                  value={report.title}
-                  maxLength={120}
-                  placeholder="e.g. Payment details"
-                  onChange={(e) =>
-                    setReport({ ...report, title: e.target.value })
-                  }
-                  onKeyDown={(e) =>
-                    e.key === "Enter" && !report.busy && saveReport()
-                  }
-                />
-              </div>
-              {report.prepared.files.length > 1 && (
-                <div className="field" style={{ marginTop: 12 }}>
-                  <label>File names</label>
-                  {report.prepared.files.map((f) => (
-                    <input
-                      key={f.id}
-                      style={{ marginBottom: 6 }}
-                      value={report.names[f.id] ?? f.fileName}
-                      maxLength={110}
-                      aria-label={
-                        f.kind === "xlsx" ? "Excel file name" : "Word file name"
-                      }
-                      onChange={(e) =>
-                        setReport({
-                          ...report,
-                          names: { ...report.names, [f.id]: e.target.value },
-                        })
-                      }
-                    />
-                  ))}
-                </div>
-              )}
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={report.record}
-                  onChange={(e) =>
-                    setReport({ ...report, record: e.target.checked })
-                  }
-                />{" "}
-                Save report to database (so we know these transactions have a
-                report)
-              </label>
-              {report.err && <p className="error">{report.err}</p>}
-            </>
-          )}
-        </Modal>
+        <ReportDialog
+          templateId={Number(tplId)}
+          uids={report.uids}
+          refNo={report.refNo}
+          reportDate={report.reportDate}
+          initial={report.prepared}
+          warnings={report.warnings}
+          already={report.already}
+          onSaved={onTxChanged}
+          onClose={closeReport}
+          onClearList={async () => {
+            await window.api.preview.clear();
+            await reloadRows();
+            onTxChanged();
+            setRefNo("");
+            setRepDate(fmtDate(todayIso()));
+            closeReport();
+          }}
+        />
       )}
     </>
   );

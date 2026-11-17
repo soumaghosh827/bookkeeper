@@ -94,6 +94,8 @@ const api: BookkeeperApi = {
       inv("rep:prepare", id, uids, title, refNo, reportDate),
     save: (r, names) => inv("rep:save", r, names),
     discard: () => inv("rep:discard"),
+    preview: (fileId) => inv("rep:preview", fileId),
+    print: (fileId, record, page) => inv("rep:print", fileId, record, page),
   },
 };
 contextBridge.exposeInMainWorld("api", api);

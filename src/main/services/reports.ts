@@ -5,6 +5,7 @@ import {
   normalizePlan,
   type OutputPlan,
   type ReportPrepared,
+  type ReportSheet,
   type Result,
   type TableColumn,
   type TablePlacement,
@@ -46,6 +47,7 @@ interface Pending {
   total: number;
   refNo: string; // one reference for the whole report ('' = none)
   reportDate: string; // YYYY-MM-DD
+  recorded: boolean; // already written to the database; a prepared report is recorded at most once
 }
 let pending: Pending | null = null;
 
@@ -312,6 +314,13 @@ export async function prepare(
     getTexts(db, templateId).map((t) => [t.key, t.value]),
   );
   const model = buildTableModel(rows, plan, title);
+  const sheet: ReportSheet = {
+    columns: model.columns.map((c) => ({ key: c.key, header: c.header })),
+    rows: model.rows,
+    totalLabel: model.totalLabel,
+    total: model.total,
+    title: model.title,
+  };
   const base = {
     ...texts,
     ...first,
@@ -343,12 +352,18 @@ export async function prepare(
       total,
       refNo: ref,
       reportDate: repDate,
+      recorded: false,
     };
     return {
       ok: true,
       data: {
         fileName: files[0].fileName,
-        files: files.map(({ id, kind, fileName }) => ({ id, kind, fileName })),
+        files: files.map(({ id, kind, fileName }) => ({
+          id,
+          kind,
+          fileName,
+          ...(kind === "xlsx" ? { sheet } : {}),
+        })),
         templateName: tpl.name,
         count: rows.length,
         total_paise: total,
@@ -376,7 +391,7 @@ export const discard = () => {
  *  Transaction dates are never touched. */
 export function record(db: DB, fileName: string) {
   const p = pending;
-  if (!p) return;
+  if (!p || p.recorded) return;
   db.transaction(() => {
     const now = new Date().toISOString();
     const r = db
@@ -402,4 +417,5 @@ export function record(db: DB, fileName: string) {
       addReference(db, u, p.refNo, { reportId, now });
     }
   })();
+  p.recorded = true;
 }

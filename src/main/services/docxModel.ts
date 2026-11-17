@@ -285,6 +285,9 @@ export function readParagraph(
   };
   if (pp.before) para.spaceBefore = pp.before;
   if (pp.after) para.spaceAfter = pp.after;
+  const pbb = kid(pPr, "pageBreakBefore");
+  if (pbb && !["0", "false", "off"].includes(attr(pbb, "val") ?? ""))
+    para.pageBreakBefore = true;
   return para;
 }
 

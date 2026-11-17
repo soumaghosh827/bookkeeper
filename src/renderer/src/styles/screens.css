@@ -577,7 +577,9 @@
 /* ---- Word page preview (DocPreview): white paper with dark text in both themes ---- */
 .docp-desk {
   display: flex;
-  justify-content: center;
+  flex-direction: column; /* one sheet per page, stacked */
+  align-items: center;
+  gap: var(--sp-4);
   padding: var(--sp-4);
   background: var(--surface-sunken);
   min-width: max-content; /* a page wider than the dialog scrolls instead of being clipped */
@@ -623,6 +625,88 @@
   border: 1px dashed var(--paper-line-strong);
   background: var(--paper-2);
   color: var(--paper-ink-faint);
+}
+/* ---- Excel preview (SheetPreview) ---- */
+.shp-desk {
+  padding: var(--sp-4);
+  background: var(--surface-sunken);
+  min-width: max-content;
+}
+.shp {
+  width: max-content;
+  margin: 0 auto;
+  padding: var(--sp-3);
+  background: var(--paper);
+  color: var(--paper-ink);
+  box-shadow: var(--shadow-1);
+}
+.shp-tbl {
+  border-collapse: collapse;
+}
+.shp-tbl th,
+.shp-tbl td {
+  padding: 3px 8px;
+  border: 1px solid var(--paper-line-strong);
+  white-space: nowrap;
+}
+.shp-tbl th {
+  background: var(--paper-2);
+  font-weight: var(--fw-bold);
+  text-align: center;
+}
+.shp-tbl th.shp-title {
+  border: 0;
+  background: transparent;
+  padding-bottom: var(--sp-2);
+}
+.shp-tbl .c {
+  text-align: center;
+}
+.shp-tbl .r {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.shp-total td {
+  font-weight: var(--fw-bold);
+}
+
+/* ---- printing: the dialog mounts a copy of the active tab in .print-root; paper output hides the app ---- */
+.print-root {
+  display: none;
+}
+.docp-print {
+  display: block;
+  width: auto;
+  box-shadow: none;
+}
+.shp-printwrap .shp {
+  width: 100%;
+  padding: 0;
+  box-shadow: none;
+}
+@media print {
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  #root {
+    display: none !important;
+  }
+  .print-root {
+    display: block;
+  }
+  .docp-print:not(:last-child) {
+    break-after: page; /* a new printed page wherever the preview starts a new sheet */
+  }
+  .docp-print tr,
+  .shp-tbl tr {
+    break-inside: avoid;
+  }
+  .shp-tbl thead {
+    display: table-header-group; /* the header row repeats on every printed page */
+  }
 }
 .tplflag {
   padding: 0 var(--sp-2);

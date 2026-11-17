@@ -99,45 +99,64 @@ function Blocks({ blocks, s }: { blocks: DocBlock[]; s: number }) {
   );
 }
 
-/** Read-only Word page: header on top, body, footer at the bottom. One continuous sheet, so page breaks are not drawn. */
+// Starts a new page at every paragraph flagged "page break before" (never an empty first page).
+function paginate(blocks: DocBlock[]): DocBlock[][] {
+  const pages: DocBlock[][] = [[]];
+  for (const b of blocks) {
+    if (b.type === "p" && b.pageBreakBefore && pages[pages.length - 1].length)
+      pages.push([]);
+    pages[pages.length - 1].push(b);
+  }
+  return pages;
+}
+
+/** Read-only Word pages: one white sheet per explicit page break, each with the header on top and the footer at the bottom. A sheet that overflows is not split again. */
 export default function DocPreview({
   model,
   zoom = 1,
+  print = false,
 }: {
   model: DocModel;
   zoom?: number;
+  print?: boolean; // paper output: no desk and no page padding (the print dialog supplies the margins)
 }) {
   const s = zoom * PX_PER_PT;
   const { page } = model;
   const of = (k: "header" | "body" | "footer") =>
     model.parts.filter((p) => p.kind === k);
+  const pages = paginate(of("body").flatMap((p) => p.blocks));
   return (
-    <div className="docp-desk">
-      <div
-        className="docp-page"
-        style={{
-          width: page.width * s,
-          minHeight: page.height * s,
-          padding: `${page.margin.top * s}px ${page.margin.right * s}px ${page.margin.bottom * s}px ${page.margin.left * s}px`,
-          fontFamily: fontStack(model.defaultFont),
-        }}
-      >
-        {of("header").map((p) => (
-          <div key={p.part} className="docp-head">
-            <Blocks blocks={p.blocks} s={s} />
+    <div className={print ? "docp-printwrap" : "docp-desk"}>
+      {pages.map((blocks, n) => (
+        <div
+          key={n}
+          className={print ? "docp-page docp-print" : "docp-page"}
+          style={
+            print
+              ? { fontFamily: fontStack(model.defaultFont) }
+              : {
+                  width: page.width * s,
+                  minHeight: page.height * s,
+                  padding: `${page.margin.top * s}px ${page.margin.right * s}px ${page.margin.bottom * s}px ${page.margin.left * s}px`,
+                  fontFamily: fontStack(model.defaultFont),
+                }
+          }
+        >
+          {of("header").map((p) => (
+            <div key={p.part} className="docp-head">
+              <Blocks blocks={p.blocks} s={s} />
+            </div>
+          ))}
+          <div className="docp-body">
+            <Blocks blocks={blocks} s={s} />
           </div>
-        ))}
-        <div className="docp-body">
-          {of("body").map((p) => (
-            <Blocks key={p.part} blocks={p.blocks} s={s} />
+          {of("footer").map((p) => (
+            <div key={p.part} className="docp-foot">
+              <Blocks blocks={p.blocks} s={s} />
+            </div>
           ))}
         </div>
-        {of("footer").map((p) => (
-          <div key={p.part} className="docp-foot">
-            <Blocks blocks={p.blocks} s={s} />
-          </div>
-        ))}
-      </div>
+      ))}
     </div>
   );
 }

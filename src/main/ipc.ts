@@ -363,6 +363,79 @@ export function registerIpc() {
     ),
   );
   H("rep:discard", () => rep.discard());
+  // Word model of a generated (not yet saved) file, for the report preview
+  H("rep:preview", (_e, fileId: string) =>
+    run<DocModel>(() => {
+      const f = rep
+        .getPending()
+        ?.files.find((x) => x.id === String(fileId) && x.kind === "docx");
+      if (!f)
+        return {
+          ok: false,
+          error: "Nothing prepared. Generate the report again.",
+        };
+      return { ok: true, data: readDocxModel(f.buffer) };
+    }),
+  );
+  // Prints the app window (the renderer has mounted a print-only copy of the active tab and hidden the rest).
+  // Records the report once, only after the print job succeeds.
+  H(
+    "rep:print",
+    (e, fileId: string, record: boolean, page?: DocModel["page"]) =>
+      runAsync<{ recorded: boolean }>(async () => {
+        const p = rep.getPending();
+        if (!p)
+          return {
+            ok: false,
+            error: "Nothing prepared. Generate the report again.",
+          };
+        const dim = (v: unknown, d: number) =>
+          typeof v === "number" && v >= 100 && v <= 3000 ? v : d; // points; falls back to A4
+        const um = 25400 / 72; // microns per point
+        const MARGIN_UNIT = 1; // custom margins are taken as points; if a test print shows them off by a third, try 96 / 72
+        const mg = (v: unknown) =>
+          Math.round(
+            (typeof v === "number" && v >= 0 && v <= 300 ? v : 36) *
+              MARGIN_UNIT,
+          );
+        const res = await new Promise<{ success: boolean; reason: string }>(
+          (resolve) => {
+            e.sender.print(
+              {
+                silent: false,
+                printBackground: true,
+                margins: {
+                  marginType: "custom", // the document's own margins, applied to every printed page
+                  top: mg(page?.margin?.top),
+                  right: mg(page?.margin?.right),
+                  bottom: mg(page?.margin?.bottom),
+                  left: mg(page?.margin?.left),
+                },
+                pageSize: {
+                  width: Math.round(dim(page?.width, 595.3) * um),
+                  height: Math.round(dim(page?.height, 841.9) * um),
+                },
+              },
+              (success, reason) =>
+                resolve({ success, reason: String(reason ?? "") }),
+            );
+          },
+        );
+        if (!res.success)
+          return /cancel/i.test(res.reason)
+            ? CANCELLED
+            : {
+                ok: false,
+                error: `Could not print: ${res.reason || "unknown error"}`,
+              };
+        const was = p.recorded;
+        if (record) {
+          const f = p.files.find((x) => x.id === String(fileId));
+          rep.record(db(), `${f?.fileName ?? "Report"} (printed)`);
+        }
+        return { ok: true, data: { recorded: !was && p.recorded } };
+      }),
+  );
   H("rep:save", (_e, record: boolean, names?: Record<string, string>) =>
     runAsync(async () => {
       const p = rep.getPending();
@@ -437,8 +510,8 @@ export function registerIpc() {
         outPath = dir;
         recorded = files.map((f) => f.fileName);
       }
-      if (record) rep.record(db(), recorded.join(", "));
-      rep.discard();
+      if (record) rep.record(db(), recorded.join(", ")); // no-op if this prepared report was already recorded
+      // the prepared report stays until the dialog closes (reports.discard), so Print can still use it
       return { ok: true, data: { path: outPath } };
     }),
   );

@@ -435,6 +435,7 @@ export interface DocParagraph {
   align: "left" | "center" | "right" | "justify";
   spaceBefore?: number; // pt
   spaceAfter?: number; // pt
+  pageBreakBefore?: boolean; // "page break before" is set: the paragraph starts a new page
   runs: DocRun[];
 }
 export interface DocCell {
@@ -464,10 +465,20 @@ export interface DocModel {
   parts: DocPart[];
 }
 
+// The report table as the Excel preview draws it (same cells as the .xlsx; Amount is the right-aligned column)
+export interface ReportSheet {
+  columns: { key: string; header: string }[];
+  rows: string[][];
+  totalLabel: string;
+  total: string;
+  title?: string;
+}
+
 export interface ReportFile {
   id: string; // matches OutputSpec.id
   kind: "docx" | "xlsx";
   fileName: string; // default name incl. extension; the user may edit it before saving
+  sheet?: ReportSheet; // xlsx outputs only: what the Excel tab of the preview shows
 }
 
 export interface ReportPrepared {
@@ -772,5 +783,11 @@ export interface BookkeeperApi {
       names?: Record<string, string>, // output id -> edited file name
     ): Promise<Result<{ path: string }>>; // one file: Save-As dialog; several: folder picker. Error 'Cancelled' keeps the prepared report
     discard(): Promise<void>;
+    preview(fileId: string): Promise<Result<DocModel>>; // Word model of a prepared docx output (ReportFile.id)
+    print(
+      fileId: string,
+      record: boolean,
+      page?: DocModel["page"], // the document's page size and margins, in points
+    ): Promise<Result<{ recorded: boolean }>>; // error 'Cancelled' when the user cancels the print dialog
   };
 }

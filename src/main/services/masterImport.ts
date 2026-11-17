@@ -29,7 +29,11 @@ import {
 import { audit } from "./audit";
 import type { AccRow, AccountChange } from "./importBatches";
 import {
-  DAMAGED_MSG,
+  accountProblems,
+  problemText,
+  lookAlikeText,
+  conflictText,
+  masterDiffText,
   ACCOUNT_SYNONYMS,
   autoMapHeaders,
   detectHeader,
@@ -270,18 +274,17 @@ function readRows(mapping: ColumnMapping) {
       if (isCustomKey(k) && val) extra[k] = val;
     }
 
-    const issues: string[] = [];
-    if (!a.payee) issues.push("Missing beneficiary");
-    if (r.noAccount) issues.push("Account number required");
-    if (r.badIfsc) issues.push("Invalid IFSC");
-    if (r.damaged) issues.push(DAMAGED_MSG);
-    return { n, v, a, extra, issues };
+    const issues = accountProblems(r, { needPayee: true }).map((c) =>
+      problemText([c]),
+    );
+    return { n, v, a, extra, issues, unverified: r.unverified };
   });
 }
 
 interface Group extends AccountGroup {
   key: string;
   existing: StoredAccount | null;
+  unverified: boolean; // new account with a 16+ digit number nobody has confirmed
 }
 
 function groupRows(db: DB, mapping: ColumnMapping) {
@@ -297,10 +300,16 @@ function groupRows(db: DB, mapping: ColumnMapping) {
     const key = r.a.account_no;
     let g = groups.get(key);
     if (!g) {
-      g = { ...newGroup(key), key, existing: index.byNo.get(key) ?? null };
+      g = {
+        ...newGroup(key),
+        key,
+        existing: index.byNo.get(key) ?? null,
+        unverified: false,
+      };
       groups.set(key, g);
     }
     addRowToGroup(g, r.a, r.n);
+    if (r.unverified && !g.existing) g.unverified = true; // an account already stored confirms the number
     for (const [k, val] of Object.entries(r.extra))
       if (!(k in g.extra)) g.extra[k] = val;
   }
@@ -318,15 +327,7 @@ function similarNotes(
     if (g.existing) continue;
     const like = twinOf(g.values.payee, g.values.ifsc, g.account_no);
     if (!like) continue;
-    const s = like.stored;
-    out.set(
-      g.key,
-      s
-        ? [s.payee, s.bank, s.branch, s.account_no ? `A/c ${s.account_no}` : ""]
-            .filter(Boolean)
-            .join(" · ")
-        : "Earlier row in this file",
-    );
+    out.set(g.key, lookAlikeText(like));
   }
   return out;
 }
@@ -356,7 +357,20 @@ export function analyze(db: DB, mapping: ColumnMapping): MasterAnalysis {
       fresh++;
     }
     const note = notes.get(g.key);
-    if (fields.length || note)
+    const reasons: NonNullable<MasterAccountItem["reasons"]> = [];
+    if (g.unverified)
+      reasons.push({
+        code: "A05",
+        text: `Account number ${g.account_no} has 16 or more digits and Excel may have cut its last digits. Check it against the source.`,
+      });
+    if (note) reasons.push({ code: "A03", text: note });
+    if (ex && differs) {
+      const t = masterDiffText(g.values, ex);
+      if (t) reasons.push({ code: "A01", text: t });
+    }
+    if (g.conflicts.length)
+      reasons.push({ code: "A02", text: conflictText(g) });
+    if (fields.length || note || g.unverified)
       items.push({
         key: g.key,
         account_no: g.account_no,
@@ -367,6 +381,8 @@ export function analyze(db: DB, mapping: ColumnMapping): MasterAnalysis {
         differs,
         fields,
         similar: note,
+        reasons,
+        unverified: g.unverified,
       });
   }
 
@@ -435,7 +451,10 @@ export function commitPlan(
     for (const g of groups) {
       const pick = choices.get(g.key);
       if (!g.existing) {
-        if (notes.has(g.key) && (dec[g.key] ?? sim) === "skip") {
+        if (
+          (notes.has(g.key) || g.unverified) &&
+          (dec[g.key] ?? (g.unverified ? "skip" : sim)) === "skip"
+        ) {
           skipped++;
           continue;
         }

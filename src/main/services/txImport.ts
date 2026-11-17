@@ -47,9 +47,13 @@ import type {
   TxMatchRow,
 } from "@shared/types";
 import { MATCH_CHOICES, MATCH_RECOMMENDED } from "@shared/types";
+import { caseLabel } from "@shared/importCases";
 import {
   norm,
-  DAMAGED_MSG,
+  accountProblems,
+  problemText,
+  lookAlikeText,
+  conflictText,
   ACCOUNT_SYNONYMS,
   autoMapHeaders,
   detectHeader,
@@ -353,6 +357,7 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
   const rejected: Rejected[] = [];
   const groups = new Map<string, PlannedAccount>();
   const parsed: Parsed[] = [];
+  const unverifiedNos = new Set<string>(); // 16+ digit numbers nobody has confirmed
 
   for (const { n, cells, raws, risky } of s.rows) {
     const v: Record<string, string> = {};
@@ -363,39 +368,26 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
           (k === "amount_paise" || k === "entry_date" ? raws[i] : cells[i]) ??
           "";
     });
-    const bad = (reason: string) => {
-      rejected.push({ row: n, reason, values: v });
-    };
-
     const acc = readAccountFields(v, risky.includes(accCol));
-    if (acc.noAccount) {
-      bad("Missing account number");
-      continue;
-    }
-    if (acc.damaged) {
-      bad(DAMAGED_MSG);
-      continue;
-    }
+    const reasons = accountProblems(acc, { needPayee: false }).map((c) =>
+      problemText([c]),
+    );
     const amt = parseAmountPaise(v.amount_paise ?? "");
-    if (!amt.ok) {
-      bad(amt.why);
-      continue;
-    }
+    if (!amt.ok) reasons.push(`${caseLabel("R06")} ${amt.why}`);
     let date = today;
     if (dateMode === "column") {
       const d = parseDateLoose(v.entry_date ?? "");
-      if (!d) {
-        bad("Missing or unreadable date");
-        continue;
-      }
-      date = d;
+      if (d) date = d;
+      else reasons.push(problemText(["R07"]));
     }
-    if (acc.badIfsc) {
-      bad("Invalid IFSC");
+    if (reasons.length) {
+      rejected.push({ row: n, reason: reasons.join("; "), values: v });
       continue;
     }
+    if (!amt.ok) continue; // unreachable; lets TypeScript narrow amt below
 
     const no = acc.fields.account_no;
+    if (acc.unverified) unverifiedNos.add(no);
     let g = groups.get(no);
     if (!g) {
       const cur = index.byNo.get(no);
@@ -439,7 +431,7 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
     if (dropped.has(p.no))
       rejected.push({
         row: p.n,
-        reason: "Missing beneficiary for a new account",
+        reason: problemText(["R02"]),
         values: p.v,
       });
   for (const no of dropped) groups.delete(no);
@@ -477,21 +469,25 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
       ? null
       : twinOf(g.values.payee, g.values.ifsc, g.account_no);
     if (like) {
-      const { stored: twin, earlierNo: earlier } = like;
-      const where = twin
-        ? [twin.bank, twin.branch].filter(Boolean).join(" · ")
-        : "";
       exc({
         id: `like:${g.account_no}`,
         kind: "look_alike",
         allRows: g.rows,
         account_no: g.account_no,
         payee: g.values.payee,
-        detail: twin
-          ? `Same name and IFSC as saved A/c ${twin.account_no}${where ? ` (${where})` : ""}`
-          : `Same name and IFSC as A/c ${earlier} earlier in this file`,
+        detail: lookAlikeText(like),
       });
     }
+    if (!g.existingId && unverifiedNos.has(g.account_no))
+      exc({
+        id: `unv:${g.account_no}`,
+        kind: "unverified_no",
+        allRows: g.rows,
+        account_no: g.account_no,
+        payee: g.values.payee,
+        detail:
+          "Has 16 or more digits and Excel may have cut the last ones. Check it against the source.",
+      });
     const cur = g.existingId ? index.byNo.get(g.account_no) : undefined;
     const fields = buildFields(g.seen, g.values, cur);
     if (g.conflicts.length)
@@ -501,7 +497,7 @@ export function analyze(db: DB, mapping: (string | null)[]): TxImportAnalysis {
         allRows: g.rows,
         account_no: g.account_no,
         payee: g.values.payee,
-        detail: g.conflicts.join("; ") + " (first value is used)",
+        detail: conflictText(g),
         fields: fields.filter(
           (f) => f.candidates.filter((c) => c.source === "file").length > 1,
         ),
@@ -680,7 +676,11 @@ export function commit(db: DB, opts: TxImportOptions): TxImportResult {
   );
   const skipAccounts = new Set(
     p.exceptions
-      .filter((e) => e.kind === "look_alike" && dec[e.id] === "skip")
+      .filter(
+        (e) =>
+          (e.kind === "look_alike" && dec[e.id] === "skip") ||
+          (e.kind === "unverified_no" && dec[e.id] !== "import"),
+      )
       .map((e) => e.account_no),
   );
 

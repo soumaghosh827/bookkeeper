@@ -1,4 +1,6 @@
 import type { AccField, FieldConflict } from "@shared/types";
+import type { CaseCode } from "@shared/importCases";
+import CaseTag from "./CaseTag";
 
 export interface AccountCardItem {
   key: string; // key used for field choices and decisions (account number, or "#<row>")
@@ -7,8 +9,10 @@ export interface AccountCardItem {
   rows: number[];
   rowCount: number;
   decisionKey?: string; // set when the account already exists and differs: shows the keep/update dropdown
-  note?: string; // e.g. "Ajay Yadav · SBI · A/c 123"
+  note?: string; // old style "Matches:" line, used until the transactions flow is moved to reasons
+  reasons?: { code: CaseCode; text: string }[]; // why this card is here
   similarKey?: string; // set for a new account that looks like an existing one: shows the add/skip dropdown
+  unverifiedKey?: string; // set for a new account with an unverified 16+ digit number: shows the use/skip dropdown
   fields: FieldConflict[];
 }
 type Choices = Record<string, Partial<Record<AccField, string>>>;
@@ -107,7 +111,21 @@ export default function AccountConflictCard({
                   </select>
                 </label>
               )}
-              {g.similarKey && (
+              {g.unverifiedKey && (
+                <label className="acc-ctl">
+                  <span>Long number:</span>
+                  <select
+                    value={decisions[g.unverifiedKey] ?? ""}
+                    onChange={(ev) =>
+                      onDecision(g.unverifiedKey!, ev.target.value)
+                    }
+                  >
+                    <option value="">Skip until checked</option>
+                    <option value="add">Use as shown</option>
+                  </select>
+                </label>
+              )}
+              {g.similarKey && !g.unverifiedKey && (
                 <label className="acc-ctl">
                   <span>Looks like existing:</span>
                   <select
@@ -123,7 +141,15 @@ export default function AccountConflictCard({
                 </label>
               )}
             </div>
-            {g.note && <div className="acc-note">Matches: {g.note}</div>}
+            {g.reasons?.length ? (
+              g.reasons.map((r) => (
+                <div key={r.code} className="acc-note">
+                  <CaseTag code={r.code} /> {r.text}
+                </div>
+              ))
+            ) : g.note ? (
+              <div className="acc-note">Matches: {g.note}</div>
+            ) : null}
             {g.fields.map((f) => (
               <div key={f.field} className="acc-field">
                 <span className="acc-field-label">{f.label}</span>

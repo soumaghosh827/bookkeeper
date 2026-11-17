@@ -13,6 +13,7 @@
     "dev": "electron-vite dev --watch",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "docs:cases": "tsx scripts/genImportCases.ts",
     "postinstall": "electron-builder install-app-deps",
     "dist:win": "electron-vite build && electron-builder --win"
   },
@@ -37,6 +38,7 @@
     "electron": "^33.0.0",
     "electron-builder": "^26.18.0",
     "electron-vite": "^2.3.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.5.4",
     "vite": "^5.4.0"
   }

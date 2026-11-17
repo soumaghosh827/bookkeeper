@@ -232,6 +232,8 @@ export interface MasterAccountItem {
   differs: boolean; // existing account whose details differ from the file
   fields: FieldConflict[];
   similar?: string; // new account that looks like one already stored / earlier in the file
+  reasons?: { code: "A01" | "A02" | "A03" | "A05"; text: string }[]; // why this card is here
+  unverified?: boolean; // new account whose 16+ digit number could not be verified: skipped unless the user says otherwise
 }
 export interface MasterAnalysis {
   total: number;
@@ -319,7 +321,8 @@ export type TxImportExceptionKind =
   | "file_conflict"
   | "zero_amount"
   | "high_value"
-  | "look_alike";
+  | "look_alike"
+  | "unverified_no";
 
 export type AccField = "payee" | "bank" | "branch" | "ifsc";
 export interface FieldCandidate {

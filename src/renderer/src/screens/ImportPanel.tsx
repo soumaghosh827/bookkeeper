@@ -120,8 +120,11 @@ export default function ImportPanel({
     setAn(null);
   };
   const skipCount = an
-    ? an.items.filter((i) => i.similar && (dec[i.key] ?? simRule) === "skip")
-        .length
+    ? an.items.filter((i) =>
+        i.unverified
+          ? (dec[i.key] ?? "skip") === "skip"
+          : i.similar && (dec[i.key] ?? simRule) === "skip",
+      ).length
     : 0;
   const addCount = an ? an.fresh - skipCount : 0;
   const newCount = addCount + (an?.promote ?? 0); // promoted one-off accounts also join the list
@@ -355,8 +358,9 @@ export default function ImportPanel({
                   rows: i.rows,
                   rowCount: i.rowCount,
                   decisionKey: !i.isNew && i.differs ? i.key : undefined,
-                  note: i.similar,
+                  reasons: i.reasons,
                   similarKey: i.similar ? i.key : undefined,
+                  unverifiedKey: i.unverified ? i.key : undefined,
                   fields: i.fields,
                 }))}
                 rule={rule}

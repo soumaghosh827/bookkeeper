@@ -229,12 +229,24 @@
 
 /* ----- Import ----- */
 .import {
+  --imp-toolbar-h: calc(var(--control-h) + var(--sp-3) + var(--sp-2));
   width: 100%;
   max-width: 980px;
   margin-inline: auto; /* centered on the screen */
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
+}
+/* title + action buttons stay visible while the page scrolls */
+.import > .toolbar {
+  position: sticky;
+  top: calc(
+    -1 * var(--sp-3)
+  ); /* sit flush against the tabs header, over the screen's top padding */
+  z-index: 6;
+  margin-top: calc(-1 * var(--sp-3));
+  padding: var(--sp-3) 0 var(--sp-2);
+  background: var(--bg);
 }
 .maptable {
   width: 100%;
@@ -782,6 +794,19 @@
   min-width: 0;
   max-width: 200px;
 }
+.case-tag {
+  display: inline-block;
+  padding: 0 6px;
+  margin-right: var(--sp-1);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  vertical-align: 1px;
+}
 .acc-note {
   padding: var(--sp-1) var(--sp-3);
   font-size: var(--fs-sm);
@@ -852,6 +877,11 @@
   gap: var(--sp-3);
 }
 .imp-bar {
+  position: sticky;
+  top: calc(
+    var(--imp-toolbar-h) - var(--sp-3)
+  ); /* directly under the pinned title bar */
+  z-index: 5;
   flex: none;
   display: flex;
   flex-direction: column;

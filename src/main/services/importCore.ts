@@ -3,6 +3,7 @@ import type { DB } from "../db";
 import ExcelJS from "exceljs";
 import type { SheetChoice } from "@shared/types";
 import { cleanIfsc, isValidIfsc } from "@shared/format";
+import { IMPORT_CASES, caseLabel, type CaseCode } from "@shared/importCases";
 import {
   COMPARE,
   addSeen,
@@ -19,9 +20,6 @@ export const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /** Text such as 1.2E+15: Excel has already lost the digits. */
 export const isDamagedText = (text: string) => /^\d(\.\d+)?e\+\d+$/i.test(text);
-
-export const DAMAGED_MSG =
-  "Account number damaged by Excel (long number). Format the column as Text, re-enter it and save again";
 
 /** Account numbers are matched exactly: only whitespace and a leading apostrophe are removed. */
 export const cleanAccountNo = (s: string | undefined) =>
@@ -363,6 +361,7 @@ export interface AccountRead {
   fields: AccountFields;
   noAccount: boolean;
   damaged: boolean; // the account number was already damaged by Excel
+  unverified: boolean; // a true number of 16+ digits: Excel may have cut the last digits, the app cannot tell
   badIfsc: boolean;
 }
 
@@ -382,10 +381,29 @@ export function readAccountFields(
   return {
     fields,
     noAccount: !fields.account_no,
-    damaged: !!fields.account_no && (risky || isDamagedText(fields.account_no)),
+    damaged: !!fields.account_no && isDamagedText(fields.account_no),
+    unverified:
+      !!fields.account_no && risky && !isDamagedText(fields.account_no),
     badIfsc: !!fields.ifsc && !isValidIfsc(fields.ifsc),
   };
 }
+
+/** Every problem with one row's account fields, as case codes. Payee is checked here only where a row must carry its own (master). */
+export function accountProblems(
+  r: AccountRead,
+  opts: { needPayee: boolean },
+): CaseCode[] {
+  const out: CaseCode[] = [];
+  if (opts.needPayee && !r.fields.payee) out.push("R01");
+  if (r.noAccount) out.push("R03");
+  if (r.badIfsc) out.push("R04");
+  if (r.damaged) out.push("R05");
+  return out;
+}
+
+/** "ROW-03 Account number required; ROW-04 Invalid IFSC" */
+export const problemText = (codes: CaseCode[]) =>
+  codes.map((c) => `${caseLabel(c)} ${IMPORT_CASES[c].text}`).join("; ");
 
 export interface AccountGroup {
   account_no: string;
@@ -442,6 +460,33 @@ export function twinChecker(index: AccountIndex) {
     if (!earlierNo) earlier.set(k, accountNo);
     return stored || earlierNo ? { stored, earlierNo } : null;
   };
+}
+
+/** Reason sentence for a look-alike (same name + IFSC) account. */
+export function lookAlikeText(like: {
+  stored?: StoredAccount;
+  earlierNo?: string;
+}): string {
+  const s = like.stored;
+  if (!s)
+    return `Same name and IFSC as A/c ${like.earlierNo} earlier in this file`;
+  const where = [s.bank, s.branch].filter(Boolean).join(" · ");
+  return `Same name and IFSC as saved A/c ${s.account_no} (${s.payee}${where ? `, ${where}` : ""})`;
+}
+
+/** Reason sentence for one account whose rows disagree with each other. */
+export const conflictText = (g: { conflicts: string[]; rows: number[] }) =>
+  `Rows ${g.rows.slice(0, 6).join(", ")}${g.rows.length > 6 ? "…" : ""} disagree. ${g.conflicts.join("; ")}`;
+
+/** Reason sentence for an account whose file values differ from master. */
+export function masterDiffText(
+  values: Record<string, string>,
+  cur: StoredAccount,
+): string {
+  const diffs = COMPARE.filter(
+    ([f]) => values[f] && !same(values[f], cur[f]),
+  ).map(([f, label]) => `${label}: ${cur[f] || "(empty)"} → ${values[f]}`);
+  return diffs.length ? `Differs from master. ${diffs.join("; ")}` : "";
 }
 
 // ---------- file fingerprint (both imports) ----------

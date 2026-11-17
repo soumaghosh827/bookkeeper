@@ -14,6 +14,8 @@ import type {
   TxMatchKind,
 } from "@shared/types";
 import ImportShell from "../components/ImportShell";
+import CaseTag from "../components/CaseTag";
+import type { CaseCode } from "@shared/importCases";
 import AskDialog from "@/components/AskDialog";
 import AccountConflictCard from "../components/AccountConflictCard";
 import MappingTable from "../components/MappingTable";
@@ -58,6 +60,15 @@ const KIND_LABEL: Record<Kind, string> = {
   zero_amount: "Zero amount",
   high_value: "High value",
   look_alike: "Looks like an existing account",
+  unverified_no: "Long account number, not verified",
+};
+const KIND_CODE: Record<Kind, CaseCode> = {
+  master_diff: "A01",
+  file_conflict: "A02",
+  look_alike: "A03",
+  unverified_no: "A05",
+  zero_amount: "T06",
+  high_value: "T07",
 };
 const isAmt = (k: Kind): k is AmountKind =>
   k === "zero_amount" || k === "high_value";
@@ -201,6 +212,7 @@ export default function TxImportDialog({
   const txExc = exc.filter((e) => isAmt(e.kind));
 
   const likeExc = exc.filter((e) => e.kind === "look_alike");
+  const unvExc = exc.filter((e) => e.kind === "unverified_no");
 
   const count = useMemo(() => {
     const c: Record<Kind, number> = {
@@ -209,6 +221,7 @@ export default function TxImportDialog({
       zero_amount: 0,
       high_value: 0,
       look_alike: 0,
+      unverified_no: 0,
     };
     for (const e of exc) c[e.kind]++;
     return c;
@@ -217,7 +230,12 @@ export default function TxImportDialog({
   const accGroups = useMemo(() => {
     const m = new Map<string, AccGroup>();
     for (const e of exc) {
-      if (isAmt(e.kind) || e.kind === "look_alike") continue;
+      if (
+        isAmt(e.kind) ||
+        e.kind === "look_alike" ||
+        e.kind === "unverified_no"
+      )
+        continue;
       let g = m.get(e.account_no);
       if (!g) {
         g = {
@@ -235,7 +253,10 @@ export default function TxImportDialog({
     return [...m.values()];
   }, [exc]);
 
-  const skippedLike = likeExc.filter((e) => dec[e.id] === "skip");
+  const skippedLike = [
+    ...likeExc.filter((e) => dec[e.id] === "skip"),
+    ...unvExc.filter((e) => dec[e.id] !== "import"),
+  ];
   const skippedNos = new Set(skippedLike.map((e) => e.account_no));
   const likeRows = skippedLike.reduce((s, e) => s + e.rowCount, 0);
 
@@ -323,7 +344,9 @@ export default function TxImportDialog({
             <tbody>
               {list.slice(0, MAX_ROWS).map((e) => (
                 <tr key={e.id}>
-                  <td>{KIND_LABEL[e.kind]}</td>
+                  <td>
+                    <CaseTag code={KIND_CODE[e.kind]} /> {KIND_LABEL[e.kind]}
+                  </td>
                   <td className="mono">{e.account_no}</td>
                   <td>{e.payee}</td>
                   <td>{e.detail}</td>
@@ -363,8 +386,20 @@ export default function TxImportDialog({
                         <option value="skip">Skip these rows</option>
                       </select>
                     )}
+                    {e.kind === "unverified_no" && (
+                      <select
+                        value={dec[e.id] ?? ""}
+                        onChange={(ev) => setDecision(e.id, ev.target.value)}
+                      >
+                        <option value="">Skip these rows until checked</option>
+                        <option value="import">Use as shown</option>
+                      </select>
+                    )}
                     {e.kind === "file_conflict" && (
-                      <span className="muted">First value used</span>
+                      <span className="muted">
+                        First value used, unless you pick one in the account
+                        card below
+                      </span>
                     )}
                   </td>
                 </tr>
@@ -642,6 +677,12 @@ export default function TxImportDialog({
                 I have checked what happens to these{" "}
                 {num(linkCount + reviewNew)} rows
               </label>
+            )}
+
+            {excTable(
+              unvExc,
+              "Long account numbers → Accounts table",
+              "16+ digit numbers Excel may have cut; skipped unless you choose Use as shown",
             )}
 
             {excTable(

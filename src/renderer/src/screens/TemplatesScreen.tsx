@@ -14,6 +14,7 @@ import {
 } from "@shared/planSummary";
 import PlanPreview from "@/components/PlanPreview";
 import AskDialog from "@/components/AskDialog";
+import DocPreviewDialog from "@/components/DocPreviewDialog";
 import Icon from "@/components/Icon";
 import { Toast, useToast } from "@/components/Toast";
 
@@ -54,6 +55,7 @@ export default function TemplatesScreen({
   const [plan, setPlan] = useState<OutputPlan>(DEFAULT_PLAN);
   const [customMode, setCustomMode] = useState(false); // keeps "Custom" selected even if the outputs happen to match a layout
   const [askDel, setAskDel] = useState(false);
+  const [showDoc, setShowDoc] = useState(false); // Word preview dialog
   const [saved, setSaved] = useState(""); // snapshot of the last loaded or saved state; "" while loading
   const [leave, setLeave] = useState<(() => void) | null>(null); // what to do once the user agrees to discard edits
   const [draft, setDraft] = useState(false); // a new template that exists only on screen until Save
@@ -315,6 +317,12 @@ export default function TemplatesScreen({
                       <button onClick={pickWord}>
                         {hasFile ? "Replace Word file…" : "Upload Word file…"}
                       </button>
+                      <button
+                        disabled={!hasFile}
+                        onClick={() => setShowDoc(true)}
+                      >
+                        Preview
+                      </button>
                       <small>
                         {staged
                           ? `${staged.name} is ready and will be stored when you click Save changes.`
@@ -467,6 +475,13 @@ export default function TemplatesScreen({
           <div className="panel pvempty">Create a template to get started.</div>
         )}
       </div>
+      {showDoc && (staged || cur) && (
+        <DocPreviewDialog
+          title={`Preview: ${staged ? staged.name : cur!.name}`}
+          source={staged ? staged.data : cur!.id}
+          onClose={() => setShowDoc(false)}
+        />
+      )}
       {askDel && (
         <AskDialog
           title="Delete this template?"

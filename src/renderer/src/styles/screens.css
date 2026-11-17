@@ -566,12 +566,63 @@
 /* sketch pages are paper: re-point the theme tokens to the fixed light ones inside them */
 .pp-page,
 .pp-sheet {
+  color: var(--paper-ink);
   --surface: var(--paper);
   --surface-2: var(--paper-2);
   --border: var(--paper-line);
   --border-strong: var(--paper-line-strong);
   --text: var(--paper-ink);
   --text-faint: var(--paper-ink-faint);
+}
+/* ---- Word page preview (DocPreview): white paper with dark text in both themes ---- */
+.docp-desk {
+  display: flex;
+  justify-content: center;
+  padding: var(--sp-4);
+  background: var(--surface-sunken);
+  min-width: max-content; /* a page wider than the dialog scrolls instead of being clipped */
+}
+.docp-page {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  box-sizing: border-box;
+  background: var(--paper);
+  color: var(--paper-ink);
+  box-shadow: var(--shadow-1);
+}
+.docp-head {
+  margin-bottom: var(--sp-3);
+}
+.docp-body {
+  flex: 1;
+}
+.docp-foot {
+  margin-top: var(--sp-3);
+}
+.docp-p {
+  margin: 0; /* the file's own spacing is applied inline */
+  line-height: 1.2;
+  white-space: pre-wrap; /* keeps tabs, line breaks and repeated spaces */
+  overflow-wrap: anywhere;
+}
+.docp-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.docp-td {
+  padding: 2px 4px;
+  border: 1px solid var(--paper-line-strong);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.docp-img {
+  display: inline-block;
+  padding: 0 var(--sp-2);
+  border: 1px dashed var(--paper-line-strong);
+  background: var(--paper-2);
+  color: var(--paper-ink-faint);
 }
 .tplflag {
   padding: 0 var(--sp-2);

@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { vault } from "./vault";
 import { units, unitDisplayName, type Unit } from "./units";
-import type { Result, UnitInfo } from "@shared/types";
+import type { DocModel, Result, UnitInfo } from "@shared/types";
 import { FieldError } from "./services/errors";
 import * as prefs from "./services/prefs";
 import * as labels from "./services/labels";
@@ -16,6 +16,7 @@ import * as cc from "./services/customColumns";
 import * as prev from "./services/preview";
 import * as tpl from "./services/templates";
 import * as rep from "./services/reports";
+import { readDocxModel } from "./services/docxModel";
 import { buildTransactionsWorkbook } from "./services/exportXlsx";
 
 // Handlers never leak stack traces: errors become {ok:false,error}. FieldError also tells the UI which column.
@@ -317,6 +318,32 @@ export function registerIpc() {
   );
   H("tpl:remove", (_e, id) => run(() => tpl.removeTemplate(db(), id)));
   H("tpl:lint", (_e, id: number) => tpl.lintStoredTemplate(db(), id));
+  // Read-only view of a Word file for the preview: pass the bytes (picked file) or a template id (stored file).
+  H("tpl:inspect", (_e, src: Uint8Array | number) =>
+    run<DocModel>(() => {
+      let buf: Buffer;
+      if (typeof src === "number") {
+        const f = tpl.getTemplateFile(db(), src);
+        if (!f?.file)
+          return { ok: false, error: "This template has no Word file yet" };
+        buf = f.file;
+      } else {
+        buf = Buffer.from(src);
+      }
+      if (buf.length > 20 * 1024 * 1024)
+        return { ok: false, error: "File is larger than 20 MB" };
+      // old binary .doc files start with the OLE signature D0 CF 11 E0
+      if (
+        buf.length > 4 &&
+        buf[0] === 0xd0 &&
+        buf[1] === 0xcf &&
+        buf[2] === 0x11 &&
+        buf[3] === 0xe0
+      )
+        return { ok: false, error: "Save as .docx in Word" };
+      return { ok: true, data: readDocxModel(buf) };
+    }),
+  );
   H("tpl:getTexts", (_e, id) => tpl.getTexts(db(), id));
   H("tpl:setTexts", (_e, id, t) => run(() => tpl.setTexts(db(), id, t)));
   H("tpl:getPlan", (_e, id: number) => tpl.getPlan(db(), id));

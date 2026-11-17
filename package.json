@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.10.0",
+    "@xmldom/xmldom": "^0.9.12",
     "better-sqlite3-multiple-ciphers": "^11.5.0",
     "call-bind-apply-helpers": "^1.0.2",
     "docxtemplater": "^3.50.0",

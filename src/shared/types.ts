@@ -411,6 +411,59 @@ export interface TemplateText {
   value: string;
 }
 
+// ---- .docx model: read-only view of a Word file (preview now, template mapping in step 7) ----
+// Units: points for sizes and page geometry. Table column widths are fractions that sum to 1.
+export interface DocAddr {
+  part: string; // e.g. "word/document.xml", "word/header1.xml"
+  path: number[]; // child indexes from the part's <w:body>/<w:hdr>/<w:ftr> down to this block
+}
+export interface DocRun {
+  text: string; // may contain "\t" and "\n" (tabs, line/page breaks)
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  size?: number; // pt
+  font?: string; // real font name from the file; the preview adds fallbacks
+  color?: string; // hex without "#"
+  image?: boolean; // drawing/picture: shown as an "[image]" box
+  run: number; // index among the paragraph's <w:r> runs (step 7 address)
+  offset: number; // character offset of this run in the paragraph text (step 7 address)
+}
+export interface DocParagraph {
+  type: "p";
+  addr: DocAddr;
+  align: "left" | "center" | "right" | "justify";
+  spaceBefore?: number; // pt
+  spaceAfter?: number; // pt
+  runs: DocRun[];
+}
+export interface DocCell {
+  span: number; // gridSpan
+  shade?: string; // hex fill
+  blocks: DocBlock[];
+}
+export interface DocTable {
+  type: "table";
+  addr: DocAddr;
+  colWidths: number[]; // fractions summing to 1
+  rows: { cells: DocCell[] }[];
+}
+export type DocBlock = DocParagraph | DocTable;
+export interface DocPart {
+  part: string;
+  kind: "body" | "header" | "footer";
+  blocks: DocBlock[];
+}
+export interface DocModel {
+  page: {
+    width: number;
+    height: number;
+    margin: { top: number; right: number; bottom: number; left: number };
+  };
+  defaultFont: string;
+  parts: DocPart[];
+}
+
 export interface ReportFile {
   id: string; // matches OutputSpec.id
   kind: "docx" | "xlsx";
@@ -700,6 +753,7 @@ export interface BookkeeperApi {
     setFile(id: number, data: Uint8Array): Promise<Result<Template>>;
     remove(id: number): Promise<Result>;
     lint(id: number): Promise<string[]>;
+    inspect(src: Uint8Array | number): Promise<Result<DocModel>>; // bytes of a picked file, or a template id
     getTexts(id: number): Promise<TemplateText[]>;
     setTexts(id: number, texts: TemplateText[]): Promise<Result>;
     getPlan(id: number): Promise<OutputPlan>;

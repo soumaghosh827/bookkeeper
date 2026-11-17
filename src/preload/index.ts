@@ -83,6 +83,7 @@ const api: BookkeeperApi = {
     setFile: (id, data) => inv("tpl:setFile", id, data),
     remove: (id) => inv("tpl:remove", id),
     lint: (id) => inv("tpl:lint", id),
+    inspect: (src) => inv("tpl:inspect", src),
     getTexts: (id) => inv("tpl:getTexts", id),
     setTexts: (id, t) => inv("tpl:setTexts", id, t),
     getPlan: (id) => inv("tpl:getPlan", id),

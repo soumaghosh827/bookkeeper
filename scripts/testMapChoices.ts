@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildMapping } from "../src/shared/mapChoices";
+import { buildMapping, picksFromMapping } from "../src/shared/mapChoices";
 import { validateMapping } from "../src/main/services/mappingRules";
 import type { DocSuggestion } from "../src/shared/types";
 
@@ -100,6 +100,51 @@ test("the result passes the real validator", () => {
   assert.ok(r.ok);
   if (r.ok)
     assert.deepEqual(r.texts, [{ key: "signatory_name", value: "Rahul Sen" }]);
+});
+
+test("saved choices turn back into the same picks (round trip)", () => {
+  const all = [sug("s1"), sug("s2", { text: "Rahul Sen", end: 13 }), tbl("s3")];
+  const picks = {
+    s1: { kind: "field" as const, tag: "ref_no" },
+    s2: { kind: "text" as const, tag: "signatory_name" },
+    s3: { kind: "table" as const, tag: "@table" },
+  };
+  const back = picksFromMapping(all, buildMapping(all, picks));
+  assert.deepEqual(back.picks, picks);
+  assert.equal(back.dropped, 0);
+});
+
+test("a field suggestion chosen as saved text comes back as saved text", () => {
+  const all = [sug("s1")];
+  const back = picksFromMapping(
+    all,
+    buildMapping(all, { s1: { kind: "text", tag: "ref_text" } }),
+  );
+  assert.deepEqual(back.picks, { s1: { kind: "text", tag: "ref_text" } });
+});
+
+test("a choice whose covered text no longer matches is dropped and counted", () => {
+  const all = [sug("s1")];
+  const [m] = buildMapping(all, { s1: { kind: "field", tag: "ref_no" } });
+  const back = picksFromMapping(all, [{ ...m, text: "OTHER" }]);
+  assert.deepEqual(back.picks, {});
+  assert.equal(back.dropped, 1);
+});
+
+test("a choice at a place with no suggestion is dropped and counted", () => {
+  const all = [sug("s1")];
+  const [m] = buildMapping(all, { s1: { kind: "field", tag: "ref_no" } });
+  const back = picksFromMapping(all, [{ ...m, start: 20, end: 26 }]);
+  assert.deepEqual(back.picks, {});
+  assert.equal(back.dropped, 1);
+});
+
+test("two saved choices never claim the same suggestion", () => {
+  const all = [sug("s1")];
+  const [m] = buildMapping(all, { s1: { kind: "field", tag: "ref_no" } });
+  const back = picksFromMapping(all, [m, { ...m, tag: "total" }]);
+  assert.deepEqual(back.picks, { s1: { kind: "field", tag: "ref_no" } });
+  assert.equal(back.dropped, 1);
 });
 
 console.log(failed ? `\n${failed} FAILED` : "\nall passed");

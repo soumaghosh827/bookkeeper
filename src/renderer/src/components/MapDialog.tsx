@@ -1,12 +1,21 @@
-import { useEffect, useMemo, useState } from "react";
-import type { DocAnalysis, DocModel, DocSuggestion } from "@shared/types";
-import { buildMapping } from "@shared/mapChoices";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  DocAnalysis,
+  DocMapping,
+  DocModel,
+  DocSuggestion,
+} from "@shared/types";
+import { buildMapping, picksFromMapping } from "@shared/mapChoices";
 import DocPreview from "@/components/DocPreview";
 import MapPopover, { type MapPick } from "@/components/MapPopover";
 import MapPreview from "@/components/MapPreview";
 import Modal from "@/components/Modal";
 
 const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+// A stable text form of the picks, to tell whether anything changed since the dialog opened.
+const sig = (p: Record<string, MapPick>) =>
+  JSON.stringify(Object.entries(p).sort(([a], [b]) => (a < b ? -1 : 1)));
 
 // MapPick (what the user chose for one suggestion) lives in MapPopover.tsx
 const defaultPick = (s: DocSuggestion): MapPick => ({
@@ -18,17 +27,27 @@ const defaultPick = (s: DocSuggestion): MapPick => ({
 export default function MapDialog({
   title,
   source,
+  initialPicks,
+  appColumns,
   onClose,
 }: {
   title: string;
   source: Uint8Array | number;
-  onClose: () => void;
+  initialPicks?: Record<string, MapPick>; // choices made earlier, so closing and re-opening resumes
+  appColumns?: string[]; // headers of the template's ticked table columns; the app's defaults when omitted
+  onClose: (
+    picks: Record<string, MapPick>,
+    mapping: DocMapping[],
+    changed: boolean, // anything different from what the dialog opened with
+  ) => void; // always hands back the current choices, and the same choices ready for saveMapped
 }) {
   const [data, setData] = useState<DocAnalysis | null>(null);
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState(1);
   // suggestion id -> what the user chose for it. Nothing starts chosen; Keep = no entry.
-  const [picks, setPicks] = useState<Record<string, MapPick>>({});
+  const [picks, setPicks] = useState<Record<string, MapPick>>(
+    initialPicks ?? {},
+  );
   const chosen = useMemo(() => new Set(Object.keys(picks)), [picks]);
   const [open, setOpen] = useState<{ id: string; el: HTMLElement } | null>(
     null,
@@ -36,21 +55,36 @@ export default function MapDialog({
   const [filled, setFilled] = useState<DocModel | null>(null); // "See it filled": the letter with sample data
   const [filling, setFilling] = useState(false);
   const [fillError, setFillError] = useState("");
+  const [dropped, setDropped] = useState(0); // saved choices that match nothing in the file any more
+  const baseline = useRef(sig(initialPicks ?? {})); // the picks the dialog opened with
 
   useEffect(() => {
     let stale = false;
     setData(null);
     setError("");
-    setPicks({});
+    setPicks(initialPicks ?? {});
     setOpen(null);
     setFilled(null);
     setFillError("");
+    setDropped(0);
+    baseline.current = sig(initialPicks ?? {});
     window.api.templates
       .analyze(source)
       .then((r) => {
         if (stale) return;
-        if (r.ok && r.data) setData(r.data);
-        else setError(r.error ?? "Could not read this file");
+        if (r.ok && r.data) {
+          setData(r.data);
+          // Opened from a template: show its saved choices, unless choices are already in progress.
+          if (
+            !(initialPicks && Object.keys(initialPicks).length) &&
+            r.data.mapping.length
+          ) {
+            const back = picksFromMapping(r.data.suggestions, r.data.mapping);
+            setPicks(back.picks);
+            setDropped(back.dropped);
+            baseline.current = sig(back.picks);
+          }
+        } else setError(r.error ?? "Could not read this file");
       })
       .catch((e) => {
         if (!stale)
@@ -110,12 +144,18 @@ export default function MapDialog({
     setOpen(null);
   };
 
+  const finish = () =>
+    onClose(
+      picks,
+      data ? buildMapping(data.suggestions, picks) : [],
+      sig(picks) !== baseline.current || dropped > 0,
+    );
   const i = ZOOMS.indexOf(zoom);
   return (
     <Modal
       title={title}
       wide
-      onClose={onClose}
+      onClose={finish}
       actions={
         <>
           <button
@@ -160,7 +200,9 @@ export default function MapDialog({
                 ? "Filling…"
                 : "See it filled"}
           </button>
-          <button onClick={onClose}>Close</button>
+          <button className="primary" onClick={finish}>
+            Done
+          </button>
         </>
       }
     >
@@ -185,6 +227,14 @@ export default function MapDialog({
               {fillError}
             </div>
           )}
+          {dropped > 0 && (
+            <div className="notice" style={{ margin: 12 }}>
+              {dropped} earlier choice{dropped === 1 ? "" : "s"} could not be
+              matched to this file and {dropped === 1 ? "was" : "were"} left
+              out. Choose {dropped === 1 ? "it" : "them"} again if you still
+              need {dropped === 1 ? "it" : "them"}.
+            </div>
+          )}
           <MapPreview
             model={data.model}
             suggestions={data.suggestions}
@@ -200,6 +250,7 @@ export default function MapDialog({
               })
             }
             onClear={() => setPicks({})}
+            appColumns={appColumns}
             zoom={zoom}
           />
           {open && openS && (

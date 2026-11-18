@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { DEFAULT_COLUMNS } from "@shared/types";
+import { DEFAULT_COLUMNS, MATCH_LABELS } from "@shared/types";
 import type { DocModel, DocSuggestion } from "@shared/types";
 import DocPreview, { addrKey, type DocMark } from "@/components/DocPreview";
 
@@ -65,10 +65,9 @@ export default function MapPreview({
     <div className="mapprev">
       <div className="mapprev-bar">
         <p className="mapprev-note">
-          These highlights are possibilities, not decisions. The app is only
-          guessing which words could be filled in for each report, and the
-          choice is yours. Nothing is chosen until you decide. Click a highlight
-          to see your options for it.
+          Please click the highlighted words in the document that you want to
+          map. The highlights are only the app’s guesses. Nothing in the final
+          document changes until and unless you choose it.
         </p>
         <details className="mapprev-limits">
           <summary>Good to know</summary>
@@ -87,25 +86,29 @@ export default function MapPreview({
         </details>
         <div className="mapprev-tools">
           <span className="mapprev-legend">
-            <span className="muted">Key:</span>
-            <span className="docp-mark likely">Likely</span>
-            <span className="docp-mark possible">Possible</span>
-            <span className="docp-mark chosen first last">
-              Outlined = chosen
-            </span>
+            <span className="muted">Colour guide:</span>
+            <span className="docp-mark likely">{MATCH_LABELS.likely}</span>
+            <span className="docp-mark possible">{MATCH_LABELS.possible}</span>
+            <span className="docp-mark chosen first last">Chosen</span>
           </span>
-          <button
-            className="small"
-            disabled={likelyOpen.length === 0}
-            onClick={() => onAcceptLikely(likelyOpen)}
-          >
-            Accept all likely ({likelyOpen.length})
-          </button>
-          <button className="small" disabled={nChosen === 0} onClick={onClear}>
-            Clear choices
-          </button>
-          <span className="muted">
-            {nChosen} chosen of {inText.length + tables.length} found
+          <span className="mapprev-actions">
+            <span className="muted">
+              Chosen: {nChosen} of {inText.length + tables.length}
+            </span>
+            <button
+              className="small"
+              disabled={likelyOpen.length === 0}
+              onClick={() => onAcceptLikely(likelyOpen)}
+            >
+              Choose all strong matches ({likelyOpen.length})
+            </button>
+            <button
+              className="small"
+              disabled={nChosen === 0}
+              onClick={onClear}
+            >
+              Clear choices
+            </button>
           </span>
         </div>
       </div>
@@ -156,9 +159,7 @@ export default function MapPreview({
               style={{ marginTop: 8 }}
               onClick={() => onToggle(s.id)}
             >
-              {on
-                ? "Keep my table (un-choose)"
-                : "Replace my table with the app’s table"}
+              {on ? "Keep my table" : "Replace my table with the app’s table"}
             </button>
           </section>
         );

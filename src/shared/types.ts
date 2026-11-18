@@ -500,6 +500,12 @@ export const MAP_TAG_LABELS: Record<string, string> = {
   notes: "First transaction's notes",
 };
 
+// What the user sees for DocSuggestion.confidence. The stored values stay "likely" / "possible".
+export const MATCH_LABELS: Record<"likely" | "possible", string> = {
+  likely: "Strong match",
+  possible: "Weak match",
+};
+
 // A possibility found in the user's Word file. Never applied automatically: the user decides.
 // "text" suggestions (constant text such as a signatory) have no fixed tag list: the user picks or types a saved-text key.
 export interface DocSuggestion {

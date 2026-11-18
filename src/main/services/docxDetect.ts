@@ -211,7 +211,7 @@ function labelled(text: string, boundaries: number[], out: Cand[]) {
           tag: "ref_no",
           options: ["ref_no", "reference_no"],
           confidence: "likely",
-          reason: `Follows "${m[1].trim()}"`,
+          reason: `Looks like “${m[1].replace(/[\s:\-–—.]+$/, "").trim()}”`,
           priority: 1,
         },
         text,
@@ -249,7 +249,7 @@ function labelled(text: string, boundaries: number[], out: Cand[]) {
             kind: def.kind,
             tag: def.tag,
             confidence: "likely",
-            reason: `Follows "${m[0].replace(/[\s:\-–—]+$/, "").trim()}"`,
+            reason: `Looks like “${m[0].replace(/[\s:\-–—.]+$/, "").trim()}”`,
             priority: 1,
           },
           text,
@@ -331,8 +331,8 @@ function dates(text: string, out: Cand[]) {
       const strong = /[:\-–—]/.test(lab[2]) || atSegmentStart(text, labelAt);
       confidence = strong ? "likely" : "possible";
       reason = strong
-        ? `Follows "${lab[1]}"`
-        : `Follows "${lab[1]}" inside a sentence`;
+        ? `Looks like “${lab[1]}”`
+        : `Looks like “${lab[1]}” inside a sentence`;
     }
     out.push(
       mk(

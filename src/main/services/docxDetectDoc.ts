@@ -196,7 +196,7 @@ function signatureLine(
     tag: key,
     options: [key],
     confidence: "possible",
-    reason: `Follows "${sig.closing}": text that is the same on every report`,
+    reason: `Below “${sig.closing}”: same text on every report`,
   });
   sig.n++;
   return true;

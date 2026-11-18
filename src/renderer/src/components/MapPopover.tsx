@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { MAP_TAG_LABELS } from "@shared/types";
+import { MAP_TAG_LABELS, MATCH_LABELS } from "@shared/types";
 import type { DocMapping, DocSuggestion } from "@shared/types";
 
 export type MapPick = Pick<DocMapping, "kind" | "tag">; // what the user chose for one suggestion
@@ -40,13 +40,21 @@ export default function MapPopover({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
+  // A strong match opens on "Fill from report", anything else on "No change". Nothing is chosen until Apply.
+  const strongField = s.kind === "field" && s.confidence === "likely";
   const [mode, setMode] = useState<Mode>(
-    current ? (current.kind === "text" ? "text" : "field") : "keep",
+    current
+      ? current.kind === "text"
+        ? "text"
+        : "field"
+      : strongField
+        ? "field"
+        : "keep",
   );
   const [field, setField] = useState(
     current?.kind === "field"
       ? current.tag
-      : s.kind === "field" && Object.hasOwn(MAP_TAG_LABELS, s.tag)
+      : strongField && Object.hasOwn(MAP_TAG_LABELS, s.tag)
         ? s.tag
         : "",
   );
@@ -120,8 +128,18 @@ export default function MapPopover({
     >
       <div className="mappop-text">“{shown}”</div>
       <div className="muted">
-        {s.reason} ({s.confidence})
+        {s.reason} · {MATCH_LABELS[s.confidence]}
       </div>
+
+      <label className="mappop-opt">
+        <input
+          type="radio"
+          name="mappop-mode"
+          checked={mode === "keep"}
+          onChange={() => setMode("keep")}
+        />
+        No change
+      </label>
 
       <label className="mappop-opt">
         <input
@@ -130,7 +148,7 @@ export default function MapPopover({
           checked={mode === "field"}
           onChange={() => setMode("field")}
         />
-        Field: fill it in from each report
+        Fill from report
       </label>
       {mode === "field" && (
         <>
@@ -171,7 +189,7 @@ export default function MapPopover({
           checked={mode === "text"}
           onChange={() => setMode("text")}
         />
-        Saved text: the same on every report
+        Same text on every report (saved text)
       </label>
       {mode === "text" && (
         <>
@@ -193,16 +211,6 @@ export default function MapPopover({
           )}
         </>
       )}
-
-      <label className="mappop-opt">
-        <input
-          type="radio"
-          name="mappop-mode"
-          checked={mode === "keep"}
-          onChange={() => setMode("keep")}
-        />
-        Keep: leave it exactly as typed
-      </label>
 
       <div className="mappop-actions">
         <button onClick={onClose}>Cancel</button>

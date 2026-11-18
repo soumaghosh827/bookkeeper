@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DEFAULT_PLAN } from "@shared/types";
 import type {
+  DocMapping,
   OutputPlan,
   TableColumn,
   Template,
@@ -16,6 +17,7 @@ import PlanPreview from "@/components/PlanPreview";
 import AskDialog from "@/components/AskDialog";
 import DocPreviewDialog from "@/components/DocPreviewDialog";
 import MapDialog from "@/components/MapDialog";
+import type { MapPick } from "@/components/MapPopover";
 import Icon from "@/components/Icon";
 import { Toast, useToast } from "@/components/Toast";
 
@@ -63,10 +65,20 @@ export default function TemplatesScreen({
   const [customMode, setCustomMode] = useState(false); // keeps "Custom" selected even if the outputs happen to match a layout
   const [askDel, setAskDel] = useState(false);
   const [showDoc, setShowDoc] = useState(false); // Word preview dialog
-  const [mapSrc, setMapSrc] = useState<{
+  const [mapWork, setMapWork] = useState<{
     name: string;
-    data: Uint8Array;
-  } | null>(null); // TEMPORARY (7.5d): the Word file open in the mapping dialog
+    data: Uint8Array | number; // the file's bytes, or the template id when editing its stored letter
+    picks: Record<string, MapPick>;
+    mapping: DocMapping[]; // the same choices, ready for saveMapped
+  } | null>(null); // finished letter + choices, kept on screen until Save changes
+  const [askMap, setAskMap] = useState(false); // confirm replacing the template's stored Word file
+  const [mapWarn, setMapWarn] = useState<{
+    id: number;
+    list: string[];
+  } | null>(null); // advice returned by the last mapped save
+  const [mapOpen, setMapOpen] = useState(false); // the mapping dialog is showing
+  const [mapSaved, setMapSaved] = useState(false); // the dialog is showing this template's saved choices
+  const [swap, setSwap] = useState<(() => void) | null>(null); // asks before one Word file replaces the other waiting one
   const [saved, setSaved] = useState(""); // snapshot of the last loaded or saved state; "" while loading
   const [leave, setLeave] = useState<(() => void) | null>(null); // what to do once the user agrees to discard edits
   const [draft, setDraft] = useState(false); // a new template that exists only on screen until Save
@@ -82,9 +94,16 @@ export default function TemplatesScreen({
   const cur = list.find((t) => t.id === sel) ?? null;
   const dirty =
     (!!cur || draft) &&
-    ((saved !== "" && snap(name, desc, texts, plan) !== saved) || !!staged);
+    ((saved !== "" && snap(name, desc, texts, plan) !== saved) ||
+      !!staged ||
+      !!mapWork);
   const canSave = draft || dirty;
   const hasFile = !!staged || !!cur?.has_file;
+  const shownOrigin = mapWork
+    ? "mapped"
+    : staged
+      ? "prepared"
+      : (cur?.origin ?? "none");
   const guarded = (go: () => void) => (dirty ? setLeave(() => go) : go());
 
   useEffect(() => {
@@ -112,6 +131,9 @@ export default function TemplatesScreen({
     setDesc(t?.description ?? "");
     setSaved("");
     setStaged(null);
+    setMapWork(null);
+    setMapOpen(false);
+    setMapSaved(false);
     if (!sel) {
       setTexts([]);
       setPlan(DEFAULT_PLAN);
@@ -139,6 +161,7 @@ export default function TemplatesScreen({
     newId.current = null;
     setDraft(true);
     setStaged(null);
+    setMapWork(null);
     setName("");
     setDesc("");
     setTexts([]);
@@ -152,6 +175,7 @@ export default function TemplatesScreen({
     newId.current = null;
     setDraft(false);
     setStaged(null);
+    setMapWork(null);
     setName("");
     setDesc("");
     setTexts([]);
@@ -195,12 +219,25 @@ export default function TemplatesScreen({
         const f = await window.api.templates.setFile(id, staged.data);
         if (!f.ok) return show(f.error ?? "Failed", { tone: "error" });
       }
+      // Last of all: saveMapped writes its saved texts straight to the database, so it must run after setTexts.
+      let finalTexts = cleanTexts;
+      if (mapWork) {
+        const m = await window.api.templates.saveMapped(
+          id,
+          mapWork.data,
+          mapWork.mapping,
+        );
+        if (!m.ok) return show(m.error ?? "Failed", { tone: "error" });
+        finalTexts = await window.api.templates.getTexts(id);
+        setMapWarn({ id, list: m.data?.warnings ?? [] });
+        setMapWork(null);
+      }
       setName(a.data!.name);
       setDesc(a.data!.description);
-      setTexts(cleanTexts);
+      setTexts(finalTexts);
       setPlan(c.data!);
       setStaged(null);
-      setSaved(snap(a.data!.name, a.data!.description, cleanTexts, c.data!));
+      setSaved(snap(a.data!.name, a.data!.description, finalTexts, c.data!));
       await load(id);
       if (draft) {
         newId.current = null;
@@ -213,20 +250,39 @@ export default function TemplatesScreen({
     }
   }
 
-  async function pickWord() {
-    const r = await window.api.templates.pickFile();
-    if (r.ok) setStaged(r.data!);
-    else if (r.error !== "Cancelled")
-      show(r.error ?? "Failed", { tone: "error" });
-  }
+  const requestSave = () =>
+    mapWork && cur?.has_file ? setAskMap(true) : save();
 
-  // TEMPORARY (7.5d): open the mapping view on any Word file. 7.6 replaces this with the real flow.
-  async function tryMap() {
-    const r = await window.api.templates.pickSource();
-    if (r.ok) setMapSrc(r.data!);
-    else if (r.error !== "Cancelled")
+  async function doPickWord() {
+    const r = await window.api.templates.pickFile();
+    if (r.ok) {
+      setMapWork(null);
+      setMapWarn(null);
+      setStaged(r.data!);
+    } else if (r.error !== "Cancelled")
       show(r.error ?? "Failed", { tone: "error" });
   }
+  // a finished letter waiting on screen is replaced by a prepared upload, so ask first
+  const pickWord = () => (mapWork ? setSwap(() => doPickWord) : doPickWord());
+
+  async function doPickFinished() {
+    const r = await window.api.templates.pickSource();
+    if (r.ok) {
+      setStaged(null);
+      setMapWarn(null);
+      setMapWork({
+        name: r.data!.name,
+        data: r.data!.data,
+        picks: {},
+        mapping: [],
+      });
+      setMapOpen(true);
+    } else if (r.error !== "Cancelled")
+      show(r.error ?? "Failed", { tone: "error" });
+  }
+  // and the other way round
+  const pickFinished = () =>
+    staged ? setSwap(() => doPickFinished) : doPickFinished();
 
   async function remove() {
     setAskDel(false);
@@ -298,7 +354,7 @@ export default function TemplatesScreen({
         >
           {draft ? "Discard" : "Delete"}
         </button>
-        <button className="primary" disabled={!canSave} onClick={save}>
+        <button className="primary" disabled={!canSave} onClick={requestSave}>
           Save changes
         </button>
         <button onClick={() => guarded(create)}>New template</button>
@@ -330,18 +386,14 @@ export default function TemplatesScreen({
                   </div>
                   <div className="field">
                     <label>Word file</label>
-                    <span
-                      className={`tplorigin ${staged ? "prepared" : (cur?.origin ?? "none")}`}
-                    >
-                      {
-                        ORIGIN_LABEL[
-                          staged ? "prepared" : (cur?.origin ?? "none")
-                        ]
-                      }
-                      {staged && " — not saved yet"}
+                    <span className={`tplorigin ${shownOrigin}`}>
+                      {ORIGIN_LABEL[shownOrigin]}
+                      {(staged || mapWork) && " — not saved yet"}
                     </span>
                     <div className="wordflows">
-                      <div className="wordflow">
+                      <div
+                        className={`wordflow${shownOrigin === "prepared" ? ` active${staged ? " pending" : ""}` : ""}`}
+                      >
                         <b>I have a prepared template</b>
                         <p className="muted">
                           A Word file where you already typed placeholders such
@@ -362,7 +414,9 @@ export default function TemplatesScreen({
                           </small>
                         )}
                       </div>
-                      <div className="wordflow">
+                      <div
+                        className={`wordflow${shownOrigin === "mapped" ? ` active${mapWork ? " pending" : ""}` : ""}`}
+                      >
                         <b>I have a finished letter</b>
                         <p className="muted">
                           A real letter you have already written. The app
@@ -370,19 +424,44 @@ export default function TemplatesScreen({
                           filled in for each report. You decide every one, and
                           nothing changes until you save.
                         </p>
-                        <button disabled={!!staged || draft} onClick={tryMap}>
-                          Choose a finished letter…
-                        </button>
-                        {draft && (
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 8,
+                            alignItems: "flex-start",
+                          }}
+                        >
+                          {!mapWork && !staged && cur?.origin === "mapped" && (
+                            <button onClick={() => setMapSaved(true)}>
+                              Edit choices…
+                            </button>
+                          )}
+                          <button
+                            onClick={
+                              mapWork ? () => setMapOpen(true) : pickFinished
+                            }
+                          >
+                            {mapWork
+                              ? "Edit choices…"
+                              : !staged && cur?.origin === "mapped"
+                                ? "Choose a different letter…"
+                                : "Choose a finished letter…"}
+                          </button>
+                          {mapWork && (
+                            <button
+                              className="ghost"
+                              onClick={() => setMapWork(null)}
+                            >
+                              Discard
+                            </button>
+                          )}
+                        </div>
+                        {mapWork && (
                           <small>
-                            Save this new template first (Save changes), then
-                            choose your letter.
-                          </small>
-                        )}
-                        {staged && (
-                          <small>
-                            Save your prepared upload first, or this choice
-                            would collide with it.
+                            {Object.keys(mapWork.picks).length} choice(s) from{" "}
+                            {mapWork.name} are not saved yet. They are stored
+                            when you click Save changes.
                           </small>
                         )}
                         {cur?.origin === "prepared" && !staged && (
@@ -405,16 +484,28 @@ export default function TemplatesScreen({
                         disabled={!hasFile}
                         onClick={() => setShowDoc(true)}
                       >
-                        Preview
+                        Preview Template
                       </button>
                       <small>
                         {staged
                           ? `${staged.name} is ready and will be stored when you click Save changes.`
-                          : cur?.has_file
-                            ? "A .docx is stored. Design letterhead, fonts and margins in Word."
-                            : "Choose one of the two options above."}
+                          : mapWork
+                            ? `${mapWork.name} is being mapped and will be stored when you click Save changes.`
+                            : cur?.has_file
+                              ? "A .docx is stored. Design letterhead, fonts and margins in Word."
+                              : "Choose one of the two options above."}
                       </small>
                     </div>
+                    {mapWarn?.id === sel &&
+                      mapWarn.list.map((w, i) => (
+                        <div
+                          key={`m${i}`}
+                          className="notice"
+                          style={{ marginTop: 6 }}
+                        >
+                          {w}
+                        </div>
+                      ))}
                     {staged?.warnings.map((w, i) => (
                       <div key={i} className="notice" style={{ marginTop: 6 }}>
                         {w}
@@ -566,12 +657,68 @@ export default function TemplatesScreen({
           onClose={() => setShowDoc(false)}
         />
       )}
-      {mapSrc && (
+      {mapOpen && mapWork && (
         <MapDialog
-          title={`Map: ${mapSrc.name}`}
-          source={mapSrc.data}
-          onClose={() => setMapSrc(null)}
+          title={`Map: ${mapWork.name}`}
+          source={mapWork.data}
+          initialPicks={mapWork.picks}
+          appColumns={plan.columns.filter((c) => c.on).map((c) => c.header)}
+          onClose={(picks, mapping) => {
+            setMapOpen(false);
+            // no choices = nothing to keep
+            setMapWork(
+              Object.keys(picks).length ? { ...mapWork, picks, mapping } : null,
+            );
+          }}
         />
+      )}
+      {mapSaved && cur && (
+        <MapDialog
+          title={`Choices: ${cur.name}`}
+          source={cur.id}
+          appColumns={plan.columns.filter((c) => c.on).map((c) => c.header)}
+          onClose={(picks, mapping, changed) => {
+            setMapSaved(false);
+            if (!changed) return;
+            if (!Object.keys(picks).length)
+              return show("No choices left, so nothing was changed.");
+            setMapWork({ name: cur.name, data: cur.id, picks, mapping });
+          }}
+        />
+      )}
+      {askMap && (
+        <AskDialog
+          title="Replace the Word file?"
+          danger
+          confirmLabel="Save and replace"
+          onResult={(ok) => {
+            setAskMap(false);
+            if (ok) save();
+          }}
+        >
+          <p className="muted">
+            This template already has a Word file. Saving replaces it with the
+            file built from your choices. Your other changes on this screen are
+            saved too.
+          </p>
+        </AskDialog>
+      )}
+      {swap && (
+        <AskDialog
+          title="Use this file instead?"
+          danger
+          confirmLabel="Use it"
+          onResult={(ok) => {
+            const go = swap;
+            setSwap(null);
+            if (ok) go();
+          }}
+        >
+          <p className="muted">
+            A different Word file is waiting to be saved on this template. Using
+            this one drops that one.
+          </p>
+        </AskDialog>
       )}
       {askDel && (
         <AskDialog

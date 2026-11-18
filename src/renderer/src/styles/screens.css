@@ -705,6 +705,18 @@
   cursor: default;
   padding: 0 var(--sp-1);
 }
+/* the "Chosen" sample has no fill of its own, so it sits on the white paper colour and stays readable in both themes */
+.mapprev-legend .docp-mark.chosen {
+  background: var(--paper);
+}
+/* counter and buttons go to the far right of the row, away from the colour guide */
+.mapprev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-left: auto;
+}
 .mapprev-table {
   margin: var(--sp-3);
   padding: var(--sp-3);
@@ -771,6 +783,15 @@
 }
 .wordflow p {
   margin: 0;
+}
+/* the card whose Word file this template uses: solid green outline once saved, dashed while still unsaved */
+.wordflow.active {
+  border-color: var(--ok);
+  box-shadow: 0 0 0 1px var(--ok);
+  background: var(--ok-soft);
+}
+.wordflow.active.pending {
+  border-style: dashed;
 }
 /* ---- Mapping popover (MapPopover) ---- */
 .mappop {

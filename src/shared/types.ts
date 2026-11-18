@@ -468,6 +468,65 @@ export interface DocModel {
   parts: DocPart[];
 }
 
+// One choice made on the user's own Word file (step 7). Stored as JSON in templates.mapping.
+// Keep = no entry at all. Offsets are into the paragraph text exactly as DocRun.offset counts it.
+export interface DocMapping {
+  kind: "field" | "text" | "table";
+  addr: DocAddr; // the paragraph, or the table itself when kind is "table"
+  start?: number; // [start, end) in the paragraph text; unused for tables
+  end?: number;
+  text?: string; // the covered text at mapping time; re-checked on every rewrite
+  tag: string; // docxtemplater name without braces, e.g. "payee_name", "total", "signatory_name"; "@table" for a table
+}
+
+// Friendly names for every placeholder the user can map to (used by the dropdown and by detection).
+export const MAP_TAG_LABELS: Record<string, string> = {
+  today: "Report date",
+  date: "First transaction's date",
+  ref_no: "Report reference no",
+  reference_no: "First transaction's reference no",
+  total: "Total amount",
+  total_words: "Total amount in words",
+  amount: "First transaction's amount",
+  amount_words: "First transaction's amount in words",
+  count: "Number of transactions",
+  payee: "First payee name",
+  bank: "First bank",
+  branch: "First branch",
+  account_no: "First account number",
+  ifsc: "First IFSC",
+  utr: "First UTR",
+  notes: "First transaction's notes",
+};
+
+// A possibility found in the user's Word file. Never applied automatically: the user decides.
+// "text" suggestions (constant text such as a signatory) have no fixed tag list: the user picks or types a saved-text key.
+export interface DocSuggestion {
+  id: string; // unique within one detection run
+  kind: "field" | "text" | "table";
+  addr: DocAddr; // the paragraph, or the table itself
+  start?: number; // [start, end) in the paragraph text; unused for tables
+  end?: number;
+  text: string; // the exact text covered (for a table: a short summary of its headers)
+  tag: string; // suggested default, e.g. "ref_no", "total", "@table"
+  options: string[]; // every tag offered in the dropdown, suggested one included
+  confidence: "likely" | "possible";
+  reason: string; // plain English, e.g. 'Follows "Ref No:"'
+  table?: { headers: string[]; matched: string[]; rows: number };
+}
+
+// What the main process returns when a Word file is opened for mapping (step 7).
+// `mapping` is empty for a freshly picked file and holds the saved choices when a template is re-opened.
+export interface DocAnalysis {
+  model: DocModel;
+  suggestions: DocSuggestion[];
+  mapping: DocMapping[];
+}
+// Result of saving a mapped template: the file is stored; warnings are advice only (never errors)
+export interface MappedSaveResult {
+  warnings: string[];
+}
+
 // The report table as the Excel preview draws it (same cells as the .xlsx; Amount is the right-aligned column)
 export interface ReportSheet {
   columns: { key: string; header: string }[];
@@ -768,6 +827,18 @@ export interface BookkeeperApi {
     remove(id: number): Promise<Result>;
     lint(id: number): Promise<string[]>;
     inspect(src: Uint8Array | number): Promise<Result<DocModel>>; // bytes of a picked file, or a template id
+    // ---- map the user's own Word file (step 7). `src` = picked bytes, or a template id to use its stored source ----
+    pickSource(): Promise<Result<{ name: string; data: Uint8Array }>>;
+    analyze(src: Uint8Array | number): Promise<Result<DocAnalysis>>;
+    testFill(
+      src: Uint8Array | number,
+      mapping: DocMapping[],
+    ): Promise<Result<DocModel>>;
+    saveMapped(
+      id: number,
+      src: Uint8Array | number,
+      mapping: DocMapping[],
+    ): Promise<Result<MappedSaveResult>>;
     getTexts(id: number): Promise<TemplateText[]>;
     setTexts(id: number, texts: TemplateText[]): Promise<Result>;
     getPlan(id: number): Promise<OutputPlan>;

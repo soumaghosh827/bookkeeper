@@ -3,7 +3,14 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { vault } from "./vault";
 import { units, unitDisplayName, type Unit } from "./units";
-import type { DocModel, Result, UnitInfo } from "@shared/types";
+import type {
+  DocAnalysis,
+  DocMapping,
+  DocModel,
+  MappedSaveResult,
+  Result,
+  UnitInfo,
+} from "@shared/types";
 import { FieldError } from "./services/errors";
 import * as prefs from "./services/prefs";
 import * as labels from "./services/labels";
@@ -17,6 +24,9 @@ import * as prev from "./services/preview";
 import * as tpl from "./services/templates";
 import * as rep from "./services/reports";
 import { readDocxModel } from "./services/docxModel";
+import { applyMapping } from "./services/docxMap";
+import { detectDocument } from "./services/docxDetectDoc";
+import { validateMapping } from "./services/mappingRules";
 import { buildTransactionsWorkbook } from "./services/exportXlsx";
 
 // Handlers never leak stack traces: errors become {ok:false,error}. FieldError also tells the UI which column.
@@ -51,6 +61,38 @@ const saveDlg = (o: Electron.SaveDialogOptions) => {
   return w ? dialog.showSaveDialog(w, o) : dialog.showSaveDialog(o);
 };
 const db = () => vault.handle;
+// The Word file to map: bytes picked on screen, or (given a template id) the source stored on that template.
+function loadSource(
+  src: Uint8Array | number,
+): Result<{ buf: Buffer; storedMapping: string | null }> {
+  let buf: Buffer;
+  let storedMapping: string | null = null;
+  if (typeof src === "number") {
+    const s = tpl.getSource(db(), src);
+    if (!s?.source_file)
+      return {
+        ok: false,
+        error:
+          "This template was uploaded the old way. Import its Word file again to map it.",
+      };
+    buf = s.source_file;
+    storedMapping = s.mapping;
+  } else {
+    buf = Buffer.from(src);
+  }
+  if (buf.length > 20 * 1024 * 1024)
+    return { ok: false, error: "File is larger than 20 MB" };
+  // old binary .doc files start with the OLE signature D0 CF 11 E0
+  if (
+    buf.length > 4 &&
+    buf[0] === 0xd0 &&
+    buf[1] === 0xcf &&
+    buf[2] === 0x11 &&
+    buf[3] === 0xe0
+  )
+    return { ok: false, error: "Save as .docx in Word" };
+  return { ok: true, data: { buf, storedMapping } };
+}
 const unitInfo = (u: Unit): UnitInfo => ({
   id: u.id,
   name: u.name,
@@ -343,6 +385,69 @@ export function registerIpc() {
         return { ok: false, error: "Save as .docx in Word" };
       return { ok: true, data: readDocxModel(buf) };
     }),
+  );
+  // ---- map the user's own Word file (step 7) ----
+  // Picks the user's finished Word file. Not checked as a template: it is only a source to map.
+  H("tpl:pickSource", () =>
+    runAsync(async () => {
+      const r = await openDlg({
+        title: "Select your Word file",
+        filters: [{ name: "Word", extensions: ["docx"] }],
+        properties: ["openFile"],
+      });
+      if (r.canceled || !r.filePaths[0]) return CANCELLED;
+      const data = readFileSync(r.filePaths[0]);
+      const s = loadSource(data);
+      if (!s.ok) return { ok: false as const, error: s.error };
+      return {
+        ok: true as const,
+        data: { name: basename(r.filePaths[0]), data },
+      };
+    }),
+  );
+  // Model + possibilities (+ the saved choices when given a template id) for the mapping screen.
+  H("tpl:analyze", (_e, src: Uint8Array | number) =>
+    run<DocAnalysis>(() => {
+      const s = loadSource(src);
+      if (!s.ok || !s.data) return { ok: false, error: s.error };
+      const model = readDocxModel(s.data.buf);
+      let mapping: DocMapping[] = [];
+      try {
+        const v = validateMapping(JSON.parse(s.data.storedMapping ?? "[]"));
+        if (v.ok) mapping = v.mapping;
+      } catch {
+        /* unreadable stored mapping: start with no choices */
+      }
+      return {
+        ok: true,
+        data: { model, suggestions: detectDocument(model), mapping },
+      };
+    }),
+  );
+  // The result of the choices on fake data, for a "see it filled" preview. Stores nothing.
+  H("tpl:testFill", (_e, src: Uint8Array | number, mapping: unknown) =>
+    run<DocModel>(() => {
+      const s = loadSource(src);
+      if (!s.ok || !s.data) return { ok: false, error: s.error };
+      const v = validateMapping(mapping);
+      if (!v.ok) return { ok: false, error: v.error };
+      const file = applyMapping(s.data.buf, v.mapping);
+      tpl.checkDocx(file);
+      const texts = Object.fromEntries(v.texts.map((t) => [t.key, t.value]));
+      return { ok: true, data: readDocxModel(rep.renderSample(file, texts)) };
+    }),
+  );
+  // Stores the mapped template: file, source and choices together, or nothing.
+  H(
+    "tpl:saveMapped",
+    (_e, id: number, src: Uint8Array | number, mapping: unknown) =>
+      run<MappedSaveResult>(() => {
+        const s = loadSource(src);
+        if (!s.ok || !s.data) return { ok: false, error: s.error };
+        return tpl.saveMapped(db(), id, s.data.buf, mapping, (file, texts) => {
+          rep.renderSample(file, texts);
+        });
+      }),
   );
   H("tpl:getTexts", (_e, id) => tpl.getTexts(db(), id));
   H("tpl:setTexts", (_e, id, t) => run(() => tpl.setTexts(db(), id, t)));

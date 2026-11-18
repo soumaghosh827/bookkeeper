@@ -265,6 +265,114 @@ function renderDocx(
     .generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
 }
 
+/** Every placeholder value for one report: saved texts, the first transaction's fields, and the report-level totals. */
+export function fillData(
+  rows: TxRow[],
+  texts: Record<string, string>,
+  refNo: string, // the report's own reference ('' when none was entered)
+  repDate: string, // YYYY-MM-DD
+): Record<string, unknown> {
+  const r0 = rows[0]; // the first transaction feeds the single-bill placeholders
+  if (!r0) throw new Error("No transactions to fill the template with");
+  const total = rows.reduce((n, r) => n + r.amount_paise, 0);
+  return {
+    ...texts,
+    sno: 1,
+    payee: r0.payee,
+    bank: r0.bank,
+    branch: r0.branch,
+    account_no: r0.account_no,
+    ifsc: r0.ifsc,
+    amount: formatRs(r0.amount_paise),
+    amount_words: rupeesInWords(r0.amount_paise),
+    reference_no: r0.reference_no,
+    date: fmtDate(r0.entry_date),
+    utr: r0.utr,
+    notes: r0.notes,
+    count: rows.length,
+    total: formatRs(total),
+    total_words: rupeesInWords(total),
+    today: fmtDate(repDate),
+    ref_no: refNo,
+  };
+}
+
+/** Three obviously fake transactions, used to try a template without touching real data. */
+function sampleRows(): TxRow[] {
+  const mk = (
+    n: number,
+    payee: string,
+    bank: string,
+    branch: string,
+    account_no: string,
+    ifsc: string,
+    amount_paise: number,
+  ): TxRow => ({
+    uid: `sample-${n}`,
+    account_id: `sample-account-${n}`,
+    payee,
+    bank,
+    branch,
+    account_no,
+    ifsc,
+    amount_paise,
+    reference_no: `REF/SAMPLE/${n}`,
+    utr: `UTRSAMPLE000${n}`,
+    notes: "Sample",
+    entry_date: `2026-01-1${n}`,
+    extra: "{}",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    report_count: 0,
+    in_preview: 0,
+  });
+  return [
+    mk(
+      1,
+      "Sample Payee One",
+      "Sample Bank",
+      "Main Branch",
+      "100000000001",
+      "SMPL0000001",
+      1250000,
+    ),
+    mk(
+      2,
+      "Sample Payee Two",
+      "Sample Bank",
+      "Main Branch",
+      "100000000002",
+      "SMPL0000001",
+      2500000,
+    ),
+    mk(
+      3,
+      "Sample Payee Three",
+      "Other Bank",
+      "City Branch",
+      "100000000003",
+      "SMPL0000002",
+      3250000,
+    ),
+  ];
+}
+
+/**
+ * Fills a Word template with fake data and returns the result. Throws exactly where a real report would.
+ * Used to try a mapped template before it is stored, and for the "see it filled" preview. `texts` = the template's saved texts.
+ */
+export function renderSample(
+  file: Buffer,
+  texts: Record<string, string> = {},
+  placement: TablePlacement = "inline",
+): Buffer {
+  const rows = sampleRows();
+  const model = buildTableModel(rows, normalizePlan(undefined), "");
+  const tableXml = docxTableXml(model, placement);
+  const data = fillData(rows, texts, "BK/SAMPLE/1", todayIso());
+  return renderDocx(file, { ...data, table: tableXml }, tableXml);
+}
+
 export async function prepare(
   db: DB,
   templateId: number,
@@ -295,21 +403,6 @@ export async function prepare(
   if (!rows.length)
     return { ok: false, error: "None of these transactions exist any more" };
   const total = rows.reduce((n, r) => n + r.amount_paise, 0);
-  const r0 = rows[0]; // the first transaction feeds the single-bill placeholders
-  const first = {
-    sno: 1,
-    payee: r0.payee,
-    bank: r0.bank,
-    branch: r0.branch,
-    account_no: r0.account_no,
-    ifsc: r0.ifsc,
-    amount: formatRs(r0.amount_paise),
-    amount_words: rupeesInWords(r0.amount_paise),
-    reference_no: r0.reference_no,
-    date: fmtDate(r0.entry_date),
-    utr: r0.utr,
-    notes: r0.notes,
-  };
   const texts = Object.fromEntries(
     getTexts(db, templateId).map((t) => [t.key, t.value]),
   );
@@ -321,15 +414,7 @@ export async function prepare(
     total: model.total,
     title: model.title,
   };
-  const base = {
-    ...texts,
-    ...first,
-    count: rows.length,
-    total: formatRs(total),
-    total_words: rupeesInWords(total),
-    today: fmtDate(repDate),
-    ref_no: ref, // the report's own reference ('' when none was entered)
-  };
+  const base = fillData(rows, texts, ref, repDate);
 
   try {
     const files: PendingFile[] = [];

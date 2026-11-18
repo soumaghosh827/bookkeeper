@@ -4,11 +4,14 @@ import type { DB } from "../db";
 import {
   describePlan,
   normalizePlan,
+  type MappedSaveResult,
   type OutputPlan,
   type Result,
   type Template,
   type TemplateText,
 } from "@shared/types";
+import { applyMapping } from "./docxMap";
+import { validateMapping } from "./mappingRules";
 
 const toTpl = (r: any): Template => ({
   id: r.id,
@@ -121,11 +124,9 @@ export function setTemplateFile(
   if (buf.length > 20 * 1024 * 1024)
     return { ok: false, error: "File is larger than 20 MB" };
   checkDocx(buf);
-  db.prepare("UPDATE templates SET file = ?, updated_at = ? WHERE id = ?").run(
-    buf,
-    new Date().toISOString(),
-    id,
-  );
+  db.prepare(
+    "UPDATE templates SET file = ?, source_file = NULL, mapping = NULL, updated_at = ? WHERE id = ?",
+  ).run(buf, new Date().toISOString(), id);
   return { ok: true, data: get(db, id) };
 }
 export const removeTemplate = (db: DB, id: number): Result => (
@@ -137,6 +138,94 @@ export const getTemplateFile = (db: DB, id: number) =>
     | { name: string; file: Buffer | null }
     | undefined;
 
+/** Stores the user's original Word file and the mapping chosen on it. Does not touch "file" (reports use that). */
+export function saveSource(
+  db: DB,
+  id: number,
+  source: Buffer,
+  mapping: unknown,
+): Result {
+  if (source.length > 20 * 1024 * 1024)
+    return { ok: false, error: "File is larger than 20 MB" };
+  checkDocx(source);
+  const json = JSON.stringify(mapping ?? []);
+  if (json.length > 2_000_000)
+    return { ok: false, error: "Too many mappings to store" };
+  const r = db
+    .prepare(
+      "UPDATE templates SET source_file = ?, mapping = ?, updated_at = ? WHERE id = ?",
+    )
+    .run(source, json, new Date().toISOString(), id);
+  return r.changes ? { ok: true } : { ok: false, error: "Template not found" };
+}
+
+/** The original Word file and mapping JSON; both null for templates built the old way. */
+export const getSource = (db: DB, id: number) =>
+  db
+    .prepare("SELECT source_file, mapping FROM templates WHERE id = ?")
+    .get(id) as
+    | { source_file: Buffer | null; mapping: string | null }
+    | undefined;
+
+/**
+ * Stores a template built by mapping the user's own Word file. Order: validate the mapping, rewrite the file with {tags},
+ * check it compiles, try it on fake data, and only then save file + source + mapping + saved texts in ONE transaction.
+ * Nothing is stored unless every step passes. A saved text with an existing key replaces the old value.
+ * `trial` is passed in by the caller (ipc) because reports.ts imports this file, so importing it back would loop.
+ */
+export function saveMapped(
+  db: DB,
+  id: number,
+  source: Buffer,
+  mapping: unknown,
+  trial: (file: Buffer, texts: Record<string, string>) => void,
+): Result<MappedSaveResult> {
+  if (source.length > 20 * 1024 * 1024)
+    return { ok: false, error: "File is larger than 20 MB" };
+  if (!db.prepare("SELECT 1 FROM templates WHERE id = ?").get(id))
+    return { ok: false, error: "Template not found" };
+  const v = validateMapping(mapping);
+  if (!v.ok) return { ok: false, error: v.error };
+
+  let file: Buffer;
+  try {
+    file = applyMapping(source, v.mapping);
+    checkDocx(file);
+  } catch (e) {
+    return { ok: false, error: explain(e) };
+  }
+
+  const texts: Record<string, string> = Object.fromEntries(
+    getTexts(db, id).map((t) => [t.key, t.value]),
+  );
+  for (const t of v.texts) texts[t.key] = t.value;
+  try {
+    trial(file, texts);
+  } catch (e) {
+    return {
+      ok: false,
+      error: "The template could not be filled: " + explain(e),
+    };
+  }
+
+  const upsert = db.prepare(
+    "INSERT INTO template_texts (template_id, key, value) VALUES (?, ?, ?) ON CONFLICT(template_id, key) DO UPDATE SET value = excluded.value",
+  );
+  db.transaction(() => {
+    db.prepare(
+      "UPDATE templates SET file = ?, source_file = ?, mapping = ?, updated_at = ? WHERE id = ?",
+    ).run(
+      file,
+      source,
+      JSON.stringify(v.mapping),
+      new Date().toISOString(),
+      id,
+    );
+    for (const t of v.texts) upsert.run(id, t.key, t.value);
+  })();
+  return { ok: true, data: { warnings: lintTemplate(file) } };
+}
+
 export const getTexts = (db: DB, id: number): TemplateText[] =>
   db
     .prepare(
@@ -147,14 +236,14 @@ export const getTexts = (db: DB, id: number): TemplateText[] =>
 export function copyTemplates(src: DB, dest: DB): number {
   const rows = src
     .prepare(
-      "SELECT id, name, description, file, output_plan FROM templates ORDER BY id",
+      "SELECT id, name, description, file, output_plan, source_file, mapping FROM templates ORDER BY id",
     )
     .all() as any[];
   const textsOf = src.prepare(
     "SELECT key, value FROM template_texts WHERE template_id = ?",
   );
   const insT = dest.prepare(
-    "INSERT INTO templates (name, description, file, output_plan, updated_at) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO templates (name, description, file, output_plan, source_file, mapping, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
   const insX = dest.prepare(
     "INSERT INTO template_texts (template_id, key, value) VALUES (?, ?, ?)",
@@ -162,8 +251,15 @@ export function copyTemplates(src: DB, dest: DB): number {
   const now = new Date().toISOString();
   dest.transaction(() => {
     for (const t of rows) {
-      const id = insT.run(t.name, t.description, t.file, t.output_plan, now)
-        .lastInsertRowid as number;
+      const id = insT.run(
+        t.name,
+        t.description,
+        t.file,
+        t.output_plan,
+        t.source_file,
+        t.mapping,
+        now,
+      ).lastInsertRowid as number;
       for (const x of textsOf.all(t.id) as any[]) insX.run(id, x.key, x.value);
     }
   })();

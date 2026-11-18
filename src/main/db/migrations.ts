@@ -163,4 +163,13 @@ CREATE INDEX idx_txref_batch ON transaction_references(batch_id);
 CREATE INDEX idx_txref_report ON transaction_references(report_id);
 `,
   },
+  {
+    version: 5,
+    sql: `
+-- Template import revamp: the user's original Word file and the choices made on it.
+-- Both stay NULL for templates built the old way ({token} typed in Word); the "file" column is still what reports use.
+ALTER TABLE templates ADD COLUMN source_file BLOB;
+ALTER TABLE templates ADD COLUMN mapping TEXT;
+`,
+  },
 ];

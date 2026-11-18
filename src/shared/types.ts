@@ -406,6 +406,7 @@ export interface Template {
   name: string;
   description: string;
   has_file: boolean;
+  origin: "none" | "prepared" | "mapped"; // how the Word file got there: no file, a ready-made file with {placeholders}, or built from the user's finished letter
   updated_at: string;
   format: string; // short output summary, e.g. "1 page" or "Letter only + Excel"
 }

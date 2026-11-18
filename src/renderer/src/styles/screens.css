@@ -638,6 +638,182 @@
   background: var(--paper-2);
   color: var(--paper-ink-faint);
 }
+/* ---- Mapping marks on the Word preview (step 7.5) ---- */
+/* "Likely" has a solid underline and "possible" a dotted one, so they differ by more than colour. */
+.docp-mark {
+  border-radius: 2px;
+  color: var(--paper-ink);
+  cursor: pointer;
+}
+.docp-mark.likely {
+  background: var(--mark-likely);
+  border-bottom: 2px solid var(--mark-likely-line);
+}
+.docp-mark.possible {
+  background: var(--mark-possible);
+  border-bottom: 2px dotted var(--mark-possible-line);
+}
+/* One continuous outline, even when the highlighted text spans several Word runs:
+   top and bottom lines on every piece, side lines only on the first and last piece. */
+.docp-mark.chosen {
+  --edge-l: 0 0 0 0 transparent;
+  --edge-r: 0 0 0 0 transparent;
+  box-shadow:
+    inset 0 2px 0 var(--mark-chosen-line),
+    inset 0 -2px 0 var(--mark-chosen-line),
+    var(--edge-l),
+    var(--edge-r);
+}
+.docp-mark.chosen.first {
+  --edge-l: inset 2px 0 0 var(--mark-chosen-line);
+}
+.docp-mark.chosen.last {
+  --edge-r: inset -2px 0 0 var(--mark-chosen-line);
+}
+.docp-mark:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+/* ---- Mapping preview (MapPreview) ---- */
+.mapprev-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.mapprev-note {
+  margin: 0;
+  color: var(--text-muted);
+}
+.mapprev-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.mapprev-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.mapprev-legend .docp-mark {
+  cursor: default;
+  padding: 0 var(--sp-1);
+}
+.mapprev-table {
+  margin: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.mapprev-table.chosen {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+.mapprev-table h4 {
+  margin: 0 0 var(--sp-1);
+}
+.mapcols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-4);
+  margin: var(--sp-3) 0;
+}
+.mapcols ul {
+  margin: var(--sp-1) 0 0;
+  padding-left: var(--sp-4);
+}
+.mapcols-hit {
+  margin-left: var(--sp-2);
+  color: var(--ok);
+  font-size: var(--fs-xs);
+}
+.tplorigin {
+  align-self: flex-start;
+  display: inline-block;
+  margin-bottom: var(--sp-2);
+  padding: 2px var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+}
+.tplorigin.prepared {
+  background: var(--selected);
+  color: var(--text);
+}
+.tplorigin.mapped {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.wordflows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--sp-3);
+}
+.wordflow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.wordflow p {
+  margin: 0;
+}
+/* ---- Mapping popover (MapPopover) ---- */
+.mappop {
+  position: fixed;
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  width: 300px;
+  padding: var(--sp-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+.mappop-text {
+  font-weight: var(--fw-bold);
+  overflow-wrap: anywhere;
+}
+.mappop-opt {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+}
+.mappop-err {
+  color: var(--danger);
+  font-size: var(--fs-sm);
+}
+.mappop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+.mapprev-limits {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.mapprev-limits ul {
+  margin: var(--sp-1) 0 0;
+  padding-left: var(--sp-4);
+}
 /* ---- Excel preview (SheetPreview) ---- */
 .shp-desk {
   padding: var(--sp-4);

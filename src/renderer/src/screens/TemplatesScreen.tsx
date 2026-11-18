@@ -15,6 +15,7 @@ import {
 import PlanPreview from "@/components/PlanPreview";
 import AskDialog from "@/components/AskDialog";
 import DocPreviewDialog from "@/components/DocPreviewDialog";
+import MapDialog from "@/components/MapDialog";
 import Icon from "@/components/Icon";
 import { Toast, useToast } from "@/components/Toast";
 
@@ -37,6 +38,12 @@ const PLACEHOLDERS: [string, string][] = [
   ],
 ];
 
+const ORIGIN_LABEL = {
+  none: "No Word file yet",
+  prepared: "Prepared template (you wrote the placeholders)",
+  mapped: "Built from your finished letter",
+} as const;
+
 const snap = (n: string, d: string, t: TemplateText[], p: OutputPlan) =>
   JSON.stringify([n, d, t, p]);
 
@@ -56,6 +63,10 @@ export default function TemplatesScreen({
   const [customMode, setCustomMode] = useState(false); // keeps "Custom" selected even if the outputs happen to match a layout
   const [askDel, setAskDel] = useState(false);
   const [showDoc, setShowDoc] = useState(false); // Word preview dialog
+  const [mapSrc, setMapSrc] = useState<{
+    name: string;
+    data: Uint8Array;
+  } | null>(null); // TEMPORARY (7.5d): the Word file open in the mapping dialog
   const [saved, setSaved] = useState(""); // snapshot of the last loaded or saved state; "" while loading
   const [leave, setLeave] = useState<(() => void) | null>(null); // what to do once the user agrees to discard edits
   const [draft, setDraft] = useState(false); // a new template that exists only on screen until Save
@@ -209,6 +220,14 @@ export default function TemplatesScreen({
       show(r.error ?? "Failed", { tone: "error" });
   }
 
+  // TEMPORARY (7.5d): open the mapping view on any Word file. 7.6 replaces this with the real flow.
+  async function tryMap() {
+    const r = await window.api.templates.pickSource();
+    if (r.ok) setMapSrc(r.data!);
+    else if (r.error !== "Cancelled")
+      show(r.error ?? "Failed", { tone: "error" });
+  }
+
   async function remove() {
     setAskDel(false);
     await window.api.templates.remove(sel!);
@@ -311,12 +330,77 @@ export default function TemplatesScreen({
                   </div>
                   <div className="field">
                     <label>Word file</label>
-                    <div
-                      style={{ display: "flex", gap: 8, alignItems: "center" }}
+                    <span
+                      className={`tplorigin ${staged ? "prepared" : (cur?.origin ?? "none")}`}
                     >
-                      <button onClick={pickWord}>
-                        {hasFile ? "Replace Word file…" : "Upload Word file…"}
-                      </button>
+                      {
+                        ORIGIN_LABEL[
+                          staged ? "prepared" : (cur?.origin ?? "none")
+                        ]
+                      }
+                      {staged && " — not saved yet"}
+                    </span>
+                    <div className="wordflows">
+                      <div className="wordflow">
+                        <b>I have a prepared template</b>
+                        <p className="muted">
+                          A Word file where you already typed placeholders such
+                          as <code>{"{total}"}</code> or{" "}
+                          <code>{"{payee}"}</code>. The app fills them in
+                          exactly as typed.
+                        </p>
+                        <button onClick={pickWord}>
+                          {hasFile
+                            ? "Replace with a prepared template…"
+                            : "Upload prepared template…"}
+                        </button>
+                        {cur?.origin === "mapped" && !staged && (
+                          <small>
+                            This template was built from your finished letter.
+                            Saving a prepared file replaces it and removes your
+                            field choices.
+                          </small>
+                        )}
+                      </div>
+                      <div className="wordflow">
+                        <b>I have a finished letter</b>
+                        <p className="muted">
+                          A real letter you have already written. The app
+                          suggests which amounts, names and dates could be
+                          filled in for each report. You decide every one, and
+                          nothing changes until you save.
+                        </p>
+                        <button disabled={!!staged || draft} onClick={tryMap}>
+                          Choose a finished letter…
+                        </button>
+                        {draft && (
+                          <small>
+                            Save this new template first (Save changes), then
+                            choose your letter.
+                          </small>
+                        )}
+                        {staged && (
+                          <small>
+                            Save your prepared upload first, or this choice
+                            would collide with it.
+                          </small>
+                        )}
+                        {cur?.origin === "prepared" && !staged && (
+                          <small>
+                            This template has a prepared file. Saving choices
+                            from a finished letter replaces it.
+                          </small>
+                        )}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "center",
+                        marginTop: 8,
+                      }}
+                    >
                       <button
                         disabled={!hasFile}
                         onClick={() => setShowDoc(true)}
@@ -328,7 +412,7 @@ export default function TemplatesScreen({
                           ? `${staged.name} is ready and will be stored when you click Save changes.`
                           : cur?.has_file
                             ? "A .docx is stored. Design letterhead, fonts and margins in Word."
-                            : "Upload a .docx designed in Word, with placeholders in curly braces."}
+                            : "Choose one of the two options above."}
                       </small>
                     </div>
                     {staged?.warnings.map((w, i) => (
@@ -480,6 +564,13 @@ export default function TemplatesScreen({
           title={`Preview: ${staged ? staged.name : cur!.name}`}
           source={staged ? staged.data : cur!.id}
           onClose={() => setShowDoc(false)}
+        />
+      )}
+      {mapSrc && (
+        <MapDialog
+          title={`Map: ${mapSrc.name}`}
+          source={mapSrc.data}
+          onClose={() => setMapSrc(null)}
         />
       )}
       {askDel && (

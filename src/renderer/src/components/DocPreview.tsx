@@ -1,7 +1,73 @@
-import type { DocBlock, DocModel, DocParagraph, DocTable } from "@shared/types";
+import { createContext, useContext, type ReactNode } from "react";
+import type {
+  DocAddr,
+  DocBlock,
+  DocModel,
+  DocParagraph,
+  DocTable,
+} from "@shared/types";
 
 const PX_PER_PT = 96 / 72;
 const HEX = /^[0-9a-f]{6}$/i;
+
+/** A highlighted stretch of one paragraph (mapping mode). Offsets count characters of the paragraph text, like DocRun.offset. */
+export interface DocMark {
+  id: string;
+  start: number;
+  end: number;
+  tone: "likely" | "possible";
+  chosen: boolean;
+}
+export const addrKey = (a: DocAddr) => `${a.part}|${a.path.join(".")}`;
+
+interface MarkCtxValue {
+  marks: Map<string, DocMark[]>; // addrKey -> that paragraph's marks, in text order
+  onPick?: (id: string, el: HTMLElement) => void;
+}
+const MarkCtx = createContext<MarkCtxValue | null>(null);
+
+// One run's text, cut at the mark edges. Marks never overlap, so one left-to-right pass is enough.
+function Marked({
+  text,
+  offset,
+  addr,
+}: {
+  text: string;
+  offset: number;
+  addr: DocAddr;
+}) {
+  const ctx = useContext(MarkCtx);
+  const marks = ctx?.marks.get(addrKey(addr));
+  if (!ctx || !marks?.length) return <>{text}</>;
+  const out: ReactNode[] = [];
+  let at = 0;
+  for (const m of marks) {
+    const from = Math.max(m.start - offset, at);
+    const to = Math.min(m.end - offset, text.length);
+    if (to <= from) continue;
+    if (from > at) out.push(text.slice(at, from));
+    out.push(
+      <span
+        key={`${m.id}:${from}`}
+        className={`docp-mark ${m.tone}${m.chosen ? " chosen" : ""}${m.start >= offset ? " first" : ""}${m.end <= offset + text.length ? " last" : ""}`}
+        role="button"
+        tabIndex={0}
+        onClick={(e) => ctx.onPick?.(m.id, e.currentTarget)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            ctx.onPick?.(m.id, e.currentTarget);
+          }
+        }}
+      >
+        {text.slice(from, to)}
+      </span>,
+    );
+    at = to;
+  }
+  if (at < text.length) out.push(text.slice(at));
+  return <>{out}</>;
+}
 
 // The file's real font first, then a sensible fallback (preview only; the saved file keeps the real name).
 function fontStack(name: string) {
@@ -45,7 +111,7 @@ function Para({ p, s }: { p: DocParagraph; s: number }) {
               color: r.color && HEX.test(r.color) ? `#${r.color}` : undefined,
             }}
           >
-            {r.text}
+            <Marked text={r.text} offset={r.offset} addr={p.addr} />
           </span>
         );
       })}
@@ -112,13 +178,31 @@ function paginate(blocks: DocBlock[]): DocBlock[][] {
 
 /** Read-only Word pages: one white sheet per explicit page break, each with the header on top and the footer at the bottom. A sheet that overflows is not split again. */
 export default function DocPreview({
+  marks,
+  onPick,
+  ...rest
+}: {
+  model: DocModel;
+  zoom?: number;
+  print?: boolean; // paper output: no desk and no page padding (the print dialog supplies the margins)
+  marks?: Map<string, DocMark[]>; // mapping mode: highlights, keyed by addrKey(paragraph addr)
+  onPick?: (id: string, el: HTMLElement) => void; // a highlight was clicked, or activated from the keyboard; el = the highlighted piece
+}) {
+  return (
+    <MarkCtx.Provider value={marks ? { marks, onPick } : null}>
+      <Sheets {...rest} />
+    </MarkCtx.Provider>
+  );
+}
+
+function Sheets({
   model,
   zoom = 1,
   print = false,
 }: {
   model: DocModel;
   zoom?: number;
-  print?: boolean; // paper output: no desk and no page padding (the print dialog supplies the margins)
+  print?: boolean;
 }) {
   const s = zoom * PX_PER_PT;
   const { page } = model;

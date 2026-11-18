@@ -49,6 +49,13 @@
   --paper-ink: #17202f;
   --paper-ink-faint: #8691a4;
 
+  /* highlights drawn on the white paper when mapping a Word file (same in both themes) */
+  --mark-likely: #c9ecd8;
+  --mark-likely-line: #147a45;
+  --mark-possible: #fff0b8;
+  --mark-possible-line: #a87400;
+  --mark-chosen-line: #2f7df0;
+
   /* type */
   --font-ui:
     "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,

@@ -13,13 +13,13 @@ export const PRESETS: readonly { id: PresetId; label: string; hint: string }[] =
   [
     {
       id: "one_page",
-      label: "One-page Word file with table",
-      hint: "Letter and table in one Word file. The table sits where {@table} is in the Word file.",
+      label: "Table inside the letter",
+      hint: "One Word file. The table goes where {@table} is in the letter, or at the end if there is none.",
     },
     {
       id: "two_page",
-      label: "Two-page Word file",
-      hint: "Letter on page 1, table starts on page 2.",
+      label: "Table on a new page",
+      hint: "One Word file. The letter comes first, then the table starts on a new page.",
     },
     {
       id: "letter_excel",

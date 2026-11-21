@@ -184,6 +184,10 @@ const LABELLED: LabelDef[] = [
 
 const REF_VALUE = String.raw`[A-Za-z0-9]+(?:[\/\-._][A-Za-z0-9]+|${H}?\/${H}?[A-Za-z0-9]+)*`;
 
+// Where a payee / bank / branch value ends inside a running sentence: before a joining word, punctuation or an amount.
+const SENTENCE_STOP =
+  /\s+(?:to|for|from|by|vide|against|towards|through|amounting|being)\s|\s*[,;(]|\s+(?:rs|inr)\b|\s*₹/i;
+
 function labelled(text: string, boundaries: number[], out: Cand[]) {
   // reference numbers
   const refRe = new RegExp(
@@ -223,11 +227,18 @@ function labelled(text: string, boundaries: number[], out: Cand[]) {
     for (const m of text.matchAll(re)) {
       const vs = m.index! + m[0].length;
       let end = -1;
+      // a label inside a running sentence ("... beneficiary: X to transfer ...") has no clear end for its value
+      const midSentence =
+        def.value === "free" && !atSegmentStart(text, m.index!);
       if (def.value === "free") {
         const seg = /\t|\n|\s{2,}/.exec(text.slice(vs));
         end = seg ? vs + seg.index : text.length;
         const nextLabel = boundaries.find((b) => b > vs);
         if (nextLabel !== undefined && nextLabel < end) end = nextLabel;
+        if (midSentence) {
+          const cut = SENTENCE_STOP.exec(text.slice(vs, end));
+          if (cut) end = vs + cut.index;
+        }
         while (end > vs && /[\s,;.]/.test(text[end - 1])) end--;
       } else {
         const rest = text.slice(vs);
@@ -248,7 +259,7 @@ function labelled(text: string, boundaries: number[], out: Cand[]) {
             end,
             kind: def.kind,
             tag: def.tag,
-            confidence: "likely",
+            confidence: midSentence ? "possible" : "likely",
             reason: `Looks like “${m[0].replace(/[\s:\-–—.]+$/, "").trim()}”`,
             priority: 1,
           },

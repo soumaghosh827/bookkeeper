@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import type { DocModel } from "@shared/types";
+import { useEffect, useMemo, useState } from "react";
+import type { DocModel, OutputPlan } from "@shared/types";
+import { withLayout, wordPlacement } from "@shared/layoutPreview";
 import DocPreview from "@/components/DocPreview";
 import Modal from "@/components/Modal";
 
@@ -9,10 +10,12 @@ const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 export default function DocPreviewDialog({
   title,
   source,
+  plan,
   onClose,
 }: {
   title: string;
   source: Uint8Array | number;
+  plan?: OutputPlan; // when given, the preview shows the table where this layout puts it
   onClose: () => void;
 }) {
   const [model, setModel] = useState<DocModel | null>(null);
@@ -39,6 +42,22 @@ export default function DocPreviewDialog({
     };
   }, [source]);
 
+  const placement = plan ? wordPlacement(plan) : null;
+  const shown = useMemo(
+    () =>
+      model && plan && placement ? withLayout(model, plan, placement) : model,
+    [model, plan, placement],
+  );
+  const note =
+    !plan || !placement
+      ? ""
+      : placement === "inline"
+        ? "Sample table shown where {@table} is in the letter (at the end if there is none)."
+        : placement === "new_page"
+          ? "Sample table shown on a new page after the letter."
+          : plan.outputs.some((o) => o.kind === "xlsx")
+            ? "The letter has no table. The table goes to a separate Excel file."
+            : "The letter has no table.";
   const i = ZOOMS.indexOf(zoom);
   return (
     <Modal
@@ -78,8 +97,15 @@ export default function DocPreviewDialog({
     >
       {error ? (
         <div className="notice">{error}</div>
-      ) : model ? (
-        <DocPreview model={model} zoom={zoom} />
+      ) : shown ? (
+        <>
+          {note && (
+            <div className="notice" style={{ marginBottom: 8 }}>
+              {note}
+            </div>
+          )}
+          <DocPreview model={shown} zoom={zoom} />
+        </>
       ) : (
         <p className="muted">Reading the file…</p>
       )}

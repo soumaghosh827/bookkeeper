@@ -621,10 +621,10 @@ export function describePlan(plan: OutputPlan): string {
     o.kind === "xlsx"
       ? "Excel"
       : o.table === "new_page"
-        ? "Table on page 2"
+        ? "Table on new page"
         : o.table === "none"
           ? "Letter only"
-          : "1 page",
+          : "Table in letter",
   );
   return parts.length ? parts.join(" + ") : "No output";
 }

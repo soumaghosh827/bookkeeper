@@ -534,6 +534,12 @@
 .tplpick {
   min-width: 260px;
   max-width: 380px;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
+}
+.toolbar .tplorigin {
+  margin-bottom: 0;
+  align-self: center;
 }
 .tplpanel > .body {
   flex: 1;
@@ -916,6 +922,36 @@
   .shp-tbl thead {
     display: table-header-group; /* the header row repeats on every printed page */
   }
+}
+/* Left edge of the editor: which kind of template is open. Saved = brand, new = green dashed, unsaved edits = amber. */
+.tplpanel {
+  border-left: 4px solid var(--brand);
+}
+.tplpanel.isnew {
+  border-left: 4px dashed var(--ok);
+}
+.tplpanel.isdirty {
+  border-left-color: var(--warn);
+}
+@keyframes tplfade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.tplpanel {
+  animation: tplfade 200ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tplpanel {
+    animation: none;
+  }
+}
+.field input.needs {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px var(--brand-soft);
 }
 .tplflag {
   padding: 0 var(--sp-2);

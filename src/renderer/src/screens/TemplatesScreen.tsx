@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { DEFAULT_PLAN } from "@shared/types";
+import { DEFAULT_PLAN, describePlan } from "@shared/types";
 import type {
   DocMapping,
   OutputPlan,
@@ -46,6 +46,12 @@ const ORIGIN_LABEL = {
   mapped: "Built from your finished letter",
 } as const;
 
+const ORIGIN_SHORT = {
+  none: "No Word file",
+  prepared: "Prepared",
+  mapped: "Mapped",
+} as const;
+
 const snap = (n: string, d: string, t: TemplateText[], p: OutputPlan) =>
   JSON.stringify([n, d, t, p]);
 
@@ -63,6 +69,7 @@ export default function TemplatesScreen({
   const [texts, setTexts] = useState<TemplateText[]>([]);
   const [plan, setPlan] = useState<OutputPlan>(DEFAULT_PLAN);
   const [customMode, setCustomMode] = useState(false); // keeps "Custom" selected even if the outputs happen to match a layout
+  const [layoutChosen, setLayoutChosen] = useState(false); // a new template must have its layout picked before Save
   const [askDel, setAskDel] = useState(false);
   const [showDoc, setShowDoc] = useState(false); // Word preview dialog
   const [mapWork, setMapWork] = useState<{
@@ -109,6 +116,17 @@ export default function TemplatesScreen({
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Window title: which template is open, and whether it has unsaved edits.
+  useEffect(() => {
+    const label = draft ? name.trim() || "New template" : cur?.name;
+    document.title = label
+      ? `${label}${dirty ? " *" : ""} - Templates`
+      : "BookKeeper";
+    return () => {
+      document.title = "BookKeeper";
+    };
+  }, [draft, name, cur?.name, dirty]);
   useEffect(() => () => onDirtyChange?.(false), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(
@@ -138,6 +156,7 @@ export default function TemplatesScreen({
       setTexts([]);
       setPlan(DEFAULT_PLAN);
       setCustomMode(false);
+      setLayoutChosen(false);
       setSaved(draft ? snap("", "", [], DEFAULT_PLAN) : "");
       return;
     }
@@ -150,6 +169,7 @@ export default function TemplatesScreen({
       setTexts(tx);
       setPlan(p);
       setCustomMode(detectPreset(p) === "custom");
+      setLayoutChosen(true);
       setSaved(snap(t?.name ?? "", t?.description ?? "", tx, p));
     });
     return () => {
@@ -167,6 +187,7 @@ export default function TemplatesScreen({
     setTexts([]);
     setPlan(DEFAULT_PLAN);
     setCustomMode(false);
+    setLayoutChosen(false);
     setSaved(snap("", "", [], DEFAULT_PLAN));
     setSel(null);
   }
@@ -185,7 +206,7 @@ export default function TemplatesScreen({
   }
 
   async function save() {
-    if (!canSave || busy.current) return;
+    if (!canSave || busy.current || needLayout()) return;
     const cleanTexts = texts
       .filter((t) => t.key.trim())
       .map((t) => ({ key: t.key.trim(), value: t.value }));
@@ -250,8 +271,20 @@ export default function TemplatesScreen({
     }
   }
 
-  const requestSave = () =>
-    mapWork && cur?.has_file ? setAskMap(true) : save();
+  const needLayout = () => {
+    if (layoutChosen) return false;
+    show("Choose an output layout before saving", { tone: "error" });
+    return true;
+  };
+
+  const requestSave = () => {
+    if (needLayout()) return;
+    const replacing =
+      !!cur?.has_file &&
+      (!!staged || (!!mapWork && typeof mapWork.data !== "number"));
+    if (replacing) setAskMap(true);
+    else save();
+  };
 
   async function doPickWord() {
     const r = await window.api.templates.pickFile();
@@ -307,6 +340,7 @@ export default function TemplatesScreen({
 
   const presetId: PresetId = customMode ? "custom" : detectPreset(plan);
   function pickPreset(id: PresetId) {
+    setLayoutChosen(true);
     if (id === "custom") return setCustomMode(true);
     setCustomMode(false);
     setPlan((p) => applyPreset(p, id));
@@ -339,11 +373,22 @@ export default function TemplatesScreen({
             )}
             {list.map((t) => (
               <option key={t.id} value={t.id}>
+                {t.id === sel && dirty ? "● " : ""}
                 {t.name}
                 {t.has_file ? "" : " (no file)"}
               </option>
             ))}
           </select>
+        )}
+        {(cur || draft) && (
+          <>
+            <span className={`tplorigin ${shownOrigin}`}>
+              {ORIGIN_SHORT[shownOrigin]}
+            </span>
+            {layoutChosen && (
+              <span className="tplorigin">{describePlan(plan)}</span>
+            )}
+          </>
         )}
         <span className="grow" />
         {dirty && <span className="tplflag">Unsaved changes</span>}
@@ -362,7 +407,10 @@ export default function TemplatesScreen({
 
       <div className="split">
         {cur || draft ? (
-          <div className="panel tplpanel">
+          <div
+            key={draft ? "new" : String(sel)}
+            className={`panel tplpanel${draft ? " isnew" : ""}${dirty ? " isdirty" : ""}`}
+          >
             <div className="body">
               <div className="tplcols">
                 <div className="tplmain">
@@ -370,6 +418,9 @@ export default function TemplatesScreen({
                     <div className="field">
                       <label>Name</label>
                       <input
+                        className={name.trim() ? "" : "needs"}
+                        placeholder="Name this template"
+                        autoFocus={draft}
                         value={name}
                         maxLength={80}
                         onChange={(e) => setName(e.target.value)}
@@ -517,9 +568,14 @@ export default function TemplatesScreen({
                   <div className="field">
                     <label>What this template generates</label>
                     <select
-                      value={presetId}
+                      value={layoutChosen ? presetId : ""}
                       onChange={(e) => pickPreset(e.target.value as PresetId)}
                     >
+                      {!layoutChosen && (
+                        <option value="" disabled>
+                          Choose a layout…
+                        </option>
+                      )}
                       {PRESETS.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.label}
@@ -527,7 +583,9 @@ export default function TemplatesScreen({
                       ))}
                     </select>
                     <small>
-                      {PRESETS.find((p) => p.id === presetId)!.hint}
+                      {layoutChosen
+                        ? PRESETS.find((p) => p.id === presetId)!.hint
+                        : "Choose where the table goes. Required before saving."}
                     </small>
                   </div>
 
@@ -654,6 +712,7 @@ export default function TemplatesScreen({
         <DocPreviewDialog
           title={`Preview: ${staged ? staged.name : cur!.name}`}
           source={staged ? staged.data : cur!.id}
+          plan={plan}
           onClose={() => setShowDoc(false)}
         />
       )}
@@ -697,9 +756,14 @@ export default function TemplatesScreen({
           }}
         >
           <p className="muted">
-            This template already has a Word file. Saving replaces it with the
-            file built from your choices. Your other changes on this screen are
-            saved too.
+            {staged
+              ? cur?.origin === "mapped"
+                ? "This template was built from a finished letter. Saving replaces it with the prepared Word file you picked"
+                : "This template already has a Word file. Saving replaces it with the prepared Word file you picked."
+              : cur?.origin === "prepared"
+                ? "This template uses a prepared Word file. Saving replaces it with the finished letter you chose."
+                : "Saving replaces this template's letter with the different finished letter you picked."}{" "}
+            Your other changes on this screen are saved too.
           </p>
         </AskDialog>
       )}

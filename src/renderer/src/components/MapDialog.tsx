@@ -6,6 +6,7 @@ import type {
   DocSuggestion,
 } from "@shared/types";
 import { buildMapping, picksFromMapping } from "@shared/mapChoices";
+import { findLeftovers } from "@shared/leftovers";
 import DocPreview from "@/components/DocPreview";
 import MapPopover, { type MapPick } from "@/components/MapPopover";
 import MapPreview from "@/components/MapPreview";
@@ -49,6 +50,10 @@ export default function MapDialog({
     initialPicks ?? {},
   );
   const chosen = useMemo(() => new Set(Object.keys(picks)), [picks]);
+  const advice = useMemo(
+    () => (data ? findLeftovers(data.model, data.suggestions, picks) : []),
+    [data, picks],
+  );
   const [open, setOpen] = useState<{ id: string; el: HTMLElement } | null>(
     null,
   ); // the highlight whose popover is showing
@@ -251,6 +256,7 @@ export default function MapDialog({
             }
             onClear={() => setPicks({})}
             appColumns={appColumns}
+            advice={advice}
             zoom={zoom}
           />
           {open && openS && (

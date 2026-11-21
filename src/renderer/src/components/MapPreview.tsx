@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { DEFAULT_COLUMNS, MATCH_LABELS } from "@shared/types";
 import type { DocModel, DocSuggestion } from "@shared/types";
+import type { Leftover } from "@shared/leftovers";
 import DocPreview, { addrKey, type DocMark } from "@/components/DocPreview";
 
 /** The user's own Word file with the app's possibilities highlighted. Controlled: the parent holds which ones are chosen. */
@@ -13,6 +14,7 @@ export default function MapPreview({
   onAcceptLikely,
   onClear,
   appColumns,
+  advice,
   zoom = 1,
 }: {
   model: DocModel;
@@ -23,6 +25,7 @@ export default function MapPreview({
   onAcceptLikely: (ids: string[]) => void; // the "likely" ones not chosen yet (never tables)
   onClear: () => void;
   appColumns?: string[]; // headers of the columns the app's table will have (the template's ticked columns)
+  advice?: Leftover[]; // chosen values that still appear elsewhere in the letter (advice only)
   zoom?: number;
 }) {
   // Tables are not drawn on the page; they get their own columns view.
@@ -84,6 +87,29 @@ export default function MapPreview({
             <li>Text boxes and tracked deletions are skipped.</li>
           </ul>
         </details>
+        {advice && advice.length > 0 && (
+          <details className="mapprev-limits notice">
+            <summary>
+              Check before saving: {advice.length} value
+              {advice.length === 1 ? "" : "s"} you chose{" "}
+              {advice.length === 1 ? "is" : "are"} also typed somewhere else
+            </summary>
+            <ul>
+              {advice.map((a) => (
+                <li key={a.tag + a.value}>
+                  “{a.value}” ({a.label}) is also typed {a.count} more time
+                  {a.count === 1 ? "" : "s"}, for example in “{a.sample}”.
+                </li>
+              ))}
+            </ul>
+            <p className="muted" style={{ margin: 0 }}>
+              Those copies stay exactly as typed in every report. Choose them
+              too, or edit the letter, if they should change. This is advice
+              only. Spelled-out forms (for example an account number written in
+              words) are not checked.
+            </p>
+          </details>
+        )}
         <div className="mapprev-tools">
           <span className="mapprev-legend">
             <span className="muted">Colour guide:</span>

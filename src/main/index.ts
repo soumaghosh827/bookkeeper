@@ -12,6 +12,9 @@ function createWindow() {
     minHeight: 640,
     show: false,
     title: `BookKeeper ${app.getVersion()}`,
+    icon: app.isPackaged
+      ? undefined
+      : join(__dirname, "../../resources/icon.png"),
     autoHideMenuBar: true,
     backgroundColor: "#f3f4f7",
     webPreferences: {
@@ -22,7 +25,14 @@ function createWindow() {
     },
   });
   win.once("ready-to-show", () => win.show());
-  win.on("page-title-updated", (e) => e.preventDefault()); // keep the version in the title instead of the page's <title>
+  // The page sets its own title ("<template> * - Templates"); the version always stays at the end.
+  const baseTitle = `BookKeeper ${app.getVersion()}`;
+  win.on("page-title-updated", (e, title) => {
+    e.preventDefault();
+    win.setTitle(
+      title && title !== "BookKeeper" ? `${title} - ${baseTitle}` : baseTitle,
+    );
+  });
   // Offline app: never navigate away or open new windows from inside the app.
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://")) shell.openExternal(url);

@@ -1,7 +1,14 @@
 import PizZip from "pizzip";
 import { XMLSerializer } from "@xmldom/xmldom";
 import type { DocMapping } from "@shared/types";
-import { collectRuns, elementChildren, kid, parseXml } from "./docxModel";
+import {
+  collectRuns,
+  elementChildren,
+  kid,
+  loadStyles,
+  parseXml,
+} from "./docxModel";
+import { rPrElement, tableLookOf } from "./docxFont";
 
 const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const PART_RE = /^word\/(document|header\d*|footer\d*)\.xml$/;
@@ -204,6 +211,7 @@ export function applyMapping(
     ).push(m);
   }
 
+  const st = loadStyles(zip);
   for (const [part, list] of byPart) {
     const xml = zip.file(part)?.asText();
     if (!xml)
@@ -240,8 +248,15 @@ export function applyMapping(
 
     for (const [p, ms] of paras) rewriteParagraph(doc, p, ms);
     for (const { el } of tables) {
+      const look = tableLookOf(el, st);
       const p = doc.createElementNS(W, "w:p");
       const r = doc.createElementNS(W, "w:r");
+      if (look) {
+        r.appendChild(rPrElement(doc, look.body, true));
+        const pPr = doc.createElementNS(W, "w:pPr");
+        pPr.appendChild(rPrElement(doc, look.head));
+        p.appendChild(pPr);
+      }
       r.appendChild(makeT(doc, "{@table}"));
       p.appendChild(r);
       el.parentNode!.replaceChild(p, el);

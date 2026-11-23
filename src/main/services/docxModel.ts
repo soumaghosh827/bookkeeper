@@ -459,3 +459,28 @@ export function readDocxModel(buf: Uint8Array): DocModel {
     ],
   };
 }
+
+/**
+ * What a run really looks like in Word: document defaults -> paragraph style -> character style -> the run itself.
+ * Unlike readParagraph, an unreadable font stays undefined (no "Calibri" guess), so the caller can leave it alone.
+ * `r` may be null to get the paragraph's own style only.
+ */
+export function effectiveRunProps(
+  p: Element,
+  r: Element | null,
+  st: Styles,
+): RProps {
+  let rp = st.defR;
+  for (const s of styleChain(
+    st,
+    attr(kid(kid(p, "pPr"), "pStyle"), "val") ?? st.defParaId,
+  ))
+    rp = merge(rp, s.r);
+  if (r) {
+    const rPr = kid(r, "rPr");
+    for (const s of styleChain(st, attr(kid(rPr, "rStyle"), "val")))
+      rp = merge(rp, s.r);
+    rp = merge(rp, readRPr(rPr, st.theme));
+  }
+  return rp;
+}

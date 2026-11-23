@@ -1,6 +1,7 @@
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
 import type { DB } from "../db";
+import { tableFontFor, type TableFont } from "./docxFont";
 import {
   normalizePlan,
   type OutputPlan,
@@ -125,7 +126,7 @@ const WEIGHT: Record<string, number> = {
 };
 const ALIGN: Record<string, string> = { sno: "center", amount: "right" };
 
-function cell(
+function cellPlain(
   text: string,
   o: {
     w: number;
@@ -133,19 +134,30 @@ function cell(
     bold?: boolean;
     align?: string;
     fill?: string;
+    fonts?: string;
+    rpr?: string;
   },
 ) {
   const pr =
     `<w:tcW w:w="${o.w}" w:type="pct"/>${o.span && o.span > 1 ? `<w:gridSpan w:val="${o.span}"/>` : ""}` +
     `${o.fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${o.fill}"/>` : ""}<w:vAlign w:val="center"/>`;
   const run = text
-    ? `<w:r><w:rPr>${o.bold ? "<w:b/>" : ""}<w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr><w:t xml:space="preserve">${xmlEsc(text)}</w:t></w:r>`
+    ? `<w:r><w:rPr>${o.rpr ?? `${o.fonts ?? ""}${o.bold ? "<w:b/>" : ""}<w:sz w:val="18"/><w:szCs w:val="18"/>`}</w:rPr><w:t xml:space="preserve">${xmlEsc(text)}</w:t></w:r>`
     : "";
   return `<w:tc><w:tcPr>${pr}</w:tcPr><w:p><w:pPr><w:spacing w:before="40" w:after="40" w:line="240" w:lineRule="auto"/><w:jc w:val="${o.align ?? "left"}"/></w:pPr>${run}</w:p></w:tc>`;
 }
 
 /** WordprocessingML for the table (header row repeats on every page; rows never split across pages). '' when there is nothing to insert. */
-export function docxTableXml(m: TableModel, placement: TablePlacement): string {
+export function docxTableXml(
+  m: TableModel,
+  placement: TablePlacement,
+  font?: TableFont,
+): string {
+  const cell = (
+    text: string,
+    o: Parameters<typeof cellPlain>[1],
+    kind?: "head" | "body" | "total",
+  ) => cellPlain(text, { fonts: font?.fonts, rpr: kind && font?.[kind], ...o });
   if (placement === "none" || !m.columns.length) return "";
   const weights = m.columns.map((c) => WEIGHT[c.key] ?? 12);
   const sum = weights.reduce((a, b) => a + b, 0);
@@ -155,11 +167,11 @@ export function docxTableXml(m: TableModel, placement: TablePlacement): string {
   const line = (n: string) =>
     `<w:${n} w:val="single" w:sz="4" w:space="0" w:color="000000"/>`;
 
-  const head = `<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>${m.columns.map((c, i) => cell(c.header, { w: w[i], bold: true, align: "center" })).join("")}</w:tr>`;
+  const head = `<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>${m.columns.map((c, i) => cell(c.header, { w: w[i], bold: true, align: "center" }, "head")).join("")}</w:tr>`;
   const body = m.rows
     .map(
       (r) =>
-        `<w:tr><w:trPr><w:cantSplit/></w:trPr>${r.map((t, i) => cell(t, { w: w[i], align: ALIGN[m.columns[i].key] })).join("")}</w:tr>`,
+        `<w:tr><w:trPr><w:cantSplit/></w:trPr>${r.map((t, i) => cell(t, { w: w[i], align: ALIGN[m.columns[i].key] }, "body")).join("")}</w:tr>`,
     )
     .join("");
 
@@ -172,10 +184,11 @@ export function docxTableXml(m: TableModel, placement: TablePlacement): string {
       cells += cell(m.totalLabel, {
         w: span(0, ai),
         span: ai,
+        rpr: font?.total,
         bold: true,
         align: "right",
       });
-    cells += cell(m.total, { w: w[ai], bold: true, align: "right" });
+    cells += cell(m.total, { w: w[ai], bold: true, align: "right" }, "total");
     if (ai < m.columns.length - 1)
       cells += cell("", {
         w: span(ai + 1, w.length),
@@ -188,7 +201,7 @@ export function docxTableXml(m: TableModel, placement: TablePlacement): string {
   const title = (m.title ?? "").trim();
   const heading = title
     ? `<w:p><w:pPr><w:keepNext/>${placement === "new_page" ? "<w:pageBreakBefore/>" : ""}<w:spacing w:before="120" w:after="80"/><w:jc w:val="center"/></w:pPr>` +
-      `<w:r><w:rPr><w:b/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr><w:t xml:space="preserve">${xmlEsc(title)}</w:t></w:r></w:p>`
+      `<w:r><w:rPr>${font?.fonts ?? ""}<w:b/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr><w:t xml:space="preserve">${xmlEsc(title)}</w:t></w:r></w:p>`
     : placement === "new_page"
       ? '<w:p><w:pPr><w:pageBreakBefore/><w:spacing w:before="0" w:after="0" w:line="20" w:lineRule="exact"/></w:pPr></w:p>'
       : "";
@@ -368,7 +381,7 @@ export function renderSample(
 ): Buffer {
   const rows = sampleRows();
   const model = buildTableModel(rows, normalizePlan(undefined), "");
-  const tableXml = docxTableXml(model, placement);
+  const tableXml = docxTableXml(model, placement, tableFontFor(file));
   const data = fillData(rows, texts, "BK/SAMPLE/1", todayIso());
   return renderDocx(file, { ...data, table: tableXml }, tableXml);
 }
@@ -424,7 +437,7 @@ export async function prepare(
       let buffer: Buffer;
       if (o.kind === "xlsx") buffer = await buildTableXlsx(model);
       else {
-        const tableXml = docxTableXml(model, o.table);
+        const tableXml = docxTableXml(model, o.table, tableFontFor(tpl.file!));
         buffer = renderDocx(tpl.file!, { ...base, table: tableXml }, tableXml);
       }
       files.push({ id: o.id, kind: o.kind, fileName, buffer });

@@ -1,5 +1,6 @@
 // Single source of truth for fields and for the API the renderer may call (mirrored in preload + ipc).
 // Internal keys never change; labels are editable (field_labels table).
+import { WORDS } from "./words";
 
 export const FIELD_KEYS = [
   "payee",
@@ -616,17 +617,17 @@ export const DEFAULT_PLAN: OutputPlan = {
 };
 
 /** Short, human label for what a template produces. Order follows the plan's outputs. */
-export function describePlan(plan: OutputPlan): string {
+export function describePlan(plan: OutputPlan, mapped = false): string {
   const parts = plan.outputs.map((o) =>
     o.kind === "xlsx"
-      ? "Excel"
-      : o.table === "new_page"
-        ? "Table on new page"
-        : o.table === "none"
-          ? "Letter only"
-          : "Table in letter",
+      ? WORDS.badge.excel
+      : mapped
+        ? o.table === "none"
+          ? WORDS.badge.mappedNoTable
+          : WORDS.badge.mappedWithTable
+        : WORDS.badge[o.table],
   );
-  return parts.length ? parts.join(" + ") : "No output";
+  return parts.length ? parts.join(" + ") : WORDS.badge.empty;
 }
 
 const str = (v: unknown, max: number, fallback: string) =>
@@ -838,6 +839,11 @@ export interface BookkeeperApi {
     pickSource(): Promise<Result<{ name: string; data: Uint8Array }>>;
     analyze(src: Uint8Array | number): Promise<Result<DocAnalysis>>;
     testFill(
+      src: Uint8Array | number,
+      mapping: DocMapping[],
+    ): Promise<Result<DocModel>>;
+    // the letter with the choices applied (tags and the {@table} marker), for the Templates preview
+    inspectMapped(
       src: Uint8Array | number,
       mapping: DocMapping[],
     ): Promise<Result<DocModel>>;

@@ -87,6 +87,7 @@ const api: BookkeeperApi = {
     pickSource: () => inv("tpl:pickSource"),
     analyze: (src) => inv("tpl:analyze", src),
     testFill: (src, mapping) => inv("tpl:testFill", src, mapping),
+    inspectMapped: (src, mapping) => inv("tpl:inspectMapped", src, mapping),
     saveMapped: (id, src, mapping) => inv("tpl:saveMapped", id, src, mapping),
     getTexts: (id) => inv("tpl:getTexts", id),
     setTexts: (id, t) => inv("tpl:setTexts", id, t),

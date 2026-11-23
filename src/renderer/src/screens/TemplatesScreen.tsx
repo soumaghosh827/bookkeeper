@@ -9,10 +9,13 @@ import type {
 } from "@shared/types";
 import {
   PRESETS,
+  layoutOptions,
   applyPreset,
   detectPreset,
+  lockInline,
   type PresetId,
 } from "@shared/planSummary";
+import { WORDS } from "@shared/words";
 import PlanPreview from "@/components/PlanPreview";
 import AskDialog from "@/components/AskDialog";
 import DocPreviewDialog from "@/components/DocPreviewDialog";
@@ -21,24 +24,7 @@ import type { MapPick } from "@/components/MapPopover";
 import Icon from "@/components/Icon";
 import { Toast, useToast } from "@/components/Toast";
 
-const PLACEHOLDERS: [string, string][] = [
-  [
-    "{total} {total_words} {count} {today} {ref_no}",
-    "Totals worked out by the app, plus the report’s Date ({today}) and Reference no ({ref_no}) as entered in the list panel. {today} is the report date, which is today unless you change it. The app adds “Rs.” before {total} and “Rupees” before {total_words} itself, so don’t type them",
-  ],
-  [
-    "{payee} {bank} {branch} {account_no} {ifsc} {amount} {amount_words} {date} {reference_no} {utr} {notes}",
-    "Details of the FIRST transaction in the list (useful for a letter about one payment). The app adds “Rs.” before {amount} and “Rupees” before {amount_words} itself, so don’t type them",
-  ],
-  [
-    "{@table}",
-    "The table built by the app. Put it alone in its own paragraph where the table should go (after the signatory for the two-page layout). Without it the table goes at the end of the letter",
-  ],
-  [
-    "Your own texts, e.g. {signatory_name}",
-    "Add them below as key + value; edit them here whenever they change",
-  ],
-];
+const PLACEHOLDERS = WORDS.placeholders;
 
 const ORIGIN_LABEL = {
   none: "No Word file yet",
@@ -68,7 +54,6 @@ export default function TemplatesScreen({
   const [desc, setDesc] = useState("");
   const [texts, setTexts] = useState<TemplateText[]>([]);
   const [plan, setPlan] = useState<OutputPlan>(DEFAULT_PLAN);
-  const [customMode, setCustomMode] = useState(false); // keeps "Custom" selected even if the outputs happen to match a layout
   const [layoutChosen, setLayoutChosen] = useState(false); // a new template must have its layout picked before Save
   const [askDel, setAskDel] = useState(false);
   const [showDoc, setShowDoc] = useState(false); // Word preview dialog
@@ -89,6 +74,7 @@ export default function TemplatesScreen({
   const [saved, setSaved] = useState(""); // snapshot of the last loaded or saved state; "" while loading
   const [leave, setLeave] = useState<(() => void) | null>(null); // what to do once the user agrees to discard edits
   const [draft, setDraft] = useState(false); // a new template that exists only on screen until Save
+  const [step, setStep] = useState(1); // 1 Name, 2 Word file, 3 Outputs, 4 Columns and texts (new templates only)
   const [staged, setStaged] = useState<{
     name: string;
     data: Uint8Array;
@@ -106,11 +92,29 @@ export default function TemplatesScreen({
       !!mapWork);
   const canSave = draft || dirty;
   const hasFile = !!staged || !!cur?.has_file;
+  // What the preview shows: the prepared file waiting to be saved, else the finished letter being mapped, else the stored file.
+  const previewSource: Uint8Array | number | undefined = staged
+    ? staged.data
+    : mapWork
+      ? mapWork.data
+      : cur?.has_file
+        ? cur.id
+        : undefined;
   const shownOrigin = mapWork
     ? "mapped"
     : staged
       ? "prepared"
       : (cur?.origin ?? "none");
+  // a finished letter fixes the table position, so it never needs a layout pick
+  const layoutShown = layoutChosen || shownOrigin === "mapped";
+  // Saved templates show only the Word card in use. "Use a different method" brings the other one back.
+  const [showOther, setShowOther] = useState(false);
+  const collapse = !draft && !showOther;
+  const hidePrepared = collapse && shownOrigin === "mapped";
+  const hideMapped = collapse && shownOrigin === "prepared";
+  useEffect(() => {
+    setShowOther(false);
+  }, [sel, shownOrigin]);
   const guarded = (go: () => void) => (dirty ? setLeave(() => go) : go());
 
   useEffect(() => {
@@ -155,7 +159,6 @@ export default function TemplatesScreen({
     if (!sel) {
       setTexts([]);
       setPlan(DEFAULT_PLAN);
-      setCustomMode(false);
       setLayoutChosen(false);
       setSaved(draft ? snap("", "", [], DEFAULT_PLAN) : "");
       return;
@@ -168,7 +171,6 @@ export default function TemplatesScreen({
       if (stale) return;
       setTexts(tx);
       setPlan(p);
-      setCustomMode(detectPreset(p) === "custom");
       setLayoutChosen(true);
       setSaved(snap(t?.name ?? "", t?.description ?? "", tx, p));
     });
@@ -180,13 +182,13 @@ export default function TemplatesScreen({
   function create() {
     newId.current = null;
     setDraft(true);
+    setStep(1);
     setStaged(null);
     setMapWork(null);
     setName("");
     setDesc("");
     setTexts([]);
     setPlan(DEFAULT_PLAN);
-    setCustomMode(false);
     setLayoutChosen(false);
     setSaved(snap("", "", [], DEFAULT_PLAN));
     setSel(null);
@@ -206,22 +208,13 @@ export default function TemplatesScreen({
   }
 
   async function save() {
-    if (!canSave || busy.current || needLayout()) return;
+    if (!canSave || busy.current) return;
     const cleanTexts = texts
       .filter((t) => t.key.trim())
       .map((t) => ({ key: t.key.trim(), value: t.value }));
     // Check the saved texts first, so a new template is never half-created by a bad key.
-    const seen = new Set<string>();
-    for (const t of cleanTexts) {
-      if (!/^[a-z][a-z0-9_]{0,39}$/.test(t.key))
-        return show(
-          `Invalid key "${t.key}": use lowercase letters, digits and _`,
-          { tone: "error" },
-        );
-      if (seen.has(t.key))
-        return show(`Duplicate key "${t.key}"`, { tone: "error" });
-      seen.add(t.key);
-    }
+    const bad = textsError();
+    if (bad) return show(bad, { tone: "error" });
     busy.current = true;
     try {
       const a = await window.api.templates.save({
@@ -234,7 +227,10 @@ export default function TemplatesScreen({
       if (draft) newId.current = id; // a retry after a later failure updates this row instead of creating another
       const b = await window.api.templates.setTexts(id, cleanTexts);
       if (!b.ok) return show(b.error ?? "Failed", { tone: "error" });
-      const c = await window.api.templates.setPlan(id, plan);
+      const c = await window.api.templates.setPlan(
+        id,
+        mapWork ? lockInline(plan) : plan,
+      );
       if (!c.ok) return show(c.error ?? "Failed", { tone: "error" });
       if (staged) {
         const f = await window.api.templates.setFile(id, staged.data);
@@ -271,14 +267,46 @@ export default function TemplatesScreen({
     }
   }
 
-  const needLayout = () => {
-    if (layoutChosen) return false;
-    show("Choose an output layout before saving", { tone: "error" });
-    return true;
+  // Saved-text keys must be valid and unique. Returns the message, or "" when fine.
+  const textsError = () => {
+    const seen = new Set<string>();
+    for (const t of texts) {
+      const k = t.key.trim();
+      if (!k) continue;
+      if (!/^[a-z][a-z0-9_]{0,39}$/.test(k))
+        return `Invalid key "${k}": use lowercase letters, digits and _`;
+      if (seen.has(k)) return `Duplicate key "${k}"`;
+      seen.add(k);
+    }
+    return "";
+  };
+
+  // quick on-screen check only; the database still refuses a duplicate name
+  const nameTaken = list.some(
+    (t) =>
+      t.id !== sel && t.name.trim().toLowerCase() === name.trim().toLowerCase(),
+  );
+
+  // can the user leave this step of a new template?
+  const canNext = (s: number) => {
+    if (s === 1) return !!name.trim() && !nameTaken;
+    if (s === 2) return !!staged || !!mapWork;
+    if (s === 3) return layoutShown;
+    return (
+      layoutShown &&
+      plan.columns.every((c) => !c.on || !!c.header.trim()) &&
+      !textsError()
+    );
+  };
+
+  // New template only: picking a different kind of Word file makes the earlier layout choice void.
+  const voidLayout = (next: "prepared" | "mapped") => {
+    if (!draft || shownOrigin === next) return;
+    setLayoutChosen(false);
+    setPlan((p) => applyPreset(p, "one_page"));
   };
 
   const requestSave = () => {
-    if (needLayout()) return;
     const replacing =
       !!cur?.has_file &&
       (!!staged || (!!mapWork && typeof mapWork.data !== "number"));
@@ -289,6 +317,7 @@ export default function TemplatesScreen({
   async function doPickWord() {
     const r = await window.api.templates.pickFile();
     if (r.ok) {
+      voidLayout("prepared");
       setMapWork(null);
       setMapWarn(null);
       setStaged(r.data!);
@@ -301,6 +330,7 @@ export default function TemplatesScreen({
   async function doPickFinished() {
     const r = await window.api.templates.pickSource();
     if (r.ok) {
+      voidLayout("mapped");
       setStaged(null);
       setMapWarn(null);
       setMapWork({
@@ -309,6 +339,7 @@ export default function TemplatesScreen({
         picks: {},
         mapping: [],
       });
+      setPlan((p) => lockInline(p));
       setMapOpen(true);
     } else if (r.error !== "Cancelled")
       show(r.error ?? "Failed", { tone: "error" });
@@ -338,11 +369,9 @@ export default function TemplatesScreen({
       return { ...pl, columns: cols };
     });
 
-  const presetId: PresetId = customMode ? "custom" : detectPreset(plan);
+  const presetId: PresetId = detectPreset(plan);
   function pickPreset(id: PresetId) {
     setLayoutChosen(true);
-    if (id === "custom") return setCustomMode(true);
-    setCustomMode(false);
     setPlan((p) => applyPreset(p, id));
   }
 
@@ -385,8 +414,10 @@ export default function TemplatesScreen({
             <span className={`tplorigin ${shownOrigin}`}>
               {ORIGIN_SHORT[shownOrigin]}
             </span>
-            {layoutChosen && (
-              <span className="tplorigin">{describePlan(plan)}</span>
+            {layoutShown && (
+              <span className="tplorigin">
+                {describePlan(plan, shownOrigin === "mapped")}
+              </span>
             )}
           </>
         )}
@@ -399,7 +430,11 @@ export default function TemplatesScreen({
         >
           {draft ? "Discard" : "Delete"}
         </button>
-        <button className="primary" disabled={!canSave} onClick={requestSave}>
+        <button
+          className="primary"
+          disabled={draft || !dirty}
+          onClick={requestSave}
+        >
           Save changes
         </button>
         <button onClick={() => guarded(create)}>New template</button>
@@ -412,294 +447,382 @@ export default function TemplatesScreen({
             className={`panel tplpanel${draft ? " isnew" : ""}${dirty ? " isdirty" : ""}`}
           >
             <div className="body">
-              <div className="tplcols">
+              <div className={`tplcols${draft && step < 3 ? " solo" : ""}`}>
                 <div className="tplmain">
-                  <div className="row">
-                    <div className="field">
-                      <label>Name</label>
-                      <input
-                        className={name.trim() ? "" : "needs"}
-                        placeholder="Name this template"
-                        autoFocus={draft}
-                        value={name}
-                        maxLength={80}
-                        onChange={(e) => setName(e.target.value)}
-                      />
-                    </div>
-                    <div className="field">
-                      <label>Description</label>
-                      <input
-                        value={desc}
-                        maxLength={300}
-                        onChange={(e) => setDesc(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <div className="field">
-                    <label>Word file</label>
-                    <span className={`tplorigin ${shownOrigin}`}>
-                      {ORIGIN_LABEL[shownOrigin]}
-                      {(staged || mapWork) && " — not saved yet"}
-                    </span>
-                    <div className="wordflows">
-                      <div
-                        className={`wordflow${shownOrigin === "prepared" ? ` active${staged ? " pending" : ""}` : ""}`}
-                      >
-                        <b>I have a prepared template</b>
-                        <p className="muted">
-                          A Word file where you already typed placeholders such
-                          as <code>{"{total}"}</code> or{" "}
-                          <code>{"{payee}"}</code>. The app fills them in
-                          exactly as typed.
-                        </p>
-                        <button onClick={pickWord}>
-                          {hasFile
-                            ? "Replace with a prepared template…"
-                            : "Upload prepared template…"}
-                        </button>
-                        {cur?.origin === "mapped" && !staged && (
-                          <small>
-                            This template was built from your finished letter.
-                            Saving a prepared file replaces it and removes your
-                            field choices.
-                          </small>
-                        )}
+                  <div className="tplscroll">
+                    <div hidden={draft && step !== 1}>
+                      <div className="row">
+                        <div className="field">
+                          <label>Name</label>
+                          <input
+                            className={name.trim() ? "" : "needs"}
+                            placeholder="Name this template"
+                            autoFocus={draft}
+                            value={name}
+                            maxLength={80}
+                            onChange={(e) => setName(e.target.value)}
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Description</label>
+                          <input
+                            value={desc}
+                            maxLength={300}
+                            onChange={(e) => setDesc(e.target.value)}
+                          />
+                        </div>
                       </div>
-                      <div
-                        className={`wordflow${shownOrigin === "mapped" ? ` active${mapWork ? " pending" : ""}` : ""}`}
-                      >
-                        <b>I have a finished letter</b>
-                        <p className="muted">
-                          A real letter you have already written. The app
-                          suggests which amounts, names and dates could be
-                          filled in for each report. You decide every one, and
-                          nothing changes until you save.
-                        </p>
+                      {nameTaken && !!name.trim() && (
+                        <small
+                          style={{
+                            display: "block",
+                            color: "var(--danger)",
+                            marginBottom: 12,
+                          }}
+                        >
+                          {WORDS.steps.nameTaken}
+                        </small>
+                      )}
+                    </div>
+                    <div hidden={draft && step !== 2}>
+                      <div className="field">
+                        <label>Word file</label>
+                        <span className={`tplorigin ${shownOrigin}`}>
+                          {ORIGIN_LABEL[shownOrigin]}
+                          {(staged || mapWork) && " — not saved yet"}
+                        </span>
+                        <div className="wordflows">
+                          <div
+                            className={`wordflow${shownOrigin === "prepared" ? ` active${staged ? " pending" : ""}` : ""}`}
+                            style={
+                              hidePrepared ? { display: "none" } : undefined
+                            }
+                          >
+                            <b>I have a prepared template</b>
+                            <p className="muted">
+                              A Word file where you already typed placeholders
+                              such as <code>{"{total}"}</code> or{" "}
+                              <code>{"{payee}"}</code>. The app fills them in
+                              exactly as typed.
+                            </p>
+                            <button onClick={pickWord}>
+                              {hasFile
+                                ? "Replace with a prepared template…"
+                                : "Upload prepared template…"}
+                            </button>
+                            {cur?.origin === "mapped" && !staged && (
+                              <small>
+                                This template was built from your finished
+                                letter. Saving a prepared file replaces it and
+                                removes your field choices.
+                              </small>
+                            )}
+                          </div>
+                          <div
+                            className={`wordflow${shownOrigin === "mapped" ? ` active${mapWork ? " pending" : ""}` : ""}`}
+                            style={hideMapped ? { display: "none" } : undefined}
+                          >
+                            <b>I have a finished letter</b>
+                            <p className="muted">
+                              A real letter you have already written. The app
+                              suggests which amounts, names and dates could be
+                              filled in for each report. You decide every one,
+                              and nothing changes until you save.
+                            </p>
+                            <div
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 8,
+                                alignItems: "flex-start",
+                              }}
+                            >
+                              {!mapWork &&
+                                !staged &&
+                                cur?.origin === "mapped" && (
+                                  <button onClick={() => setMapSaved(true)}>
+                                    Edit choices…
+                                  </button>
+                                )}
+                              <button
+                                onClick={
+                                  mapWork
+                                    ? () => setMapOpen(true)
+                                    : pickFinished
+                                }
+                              >
+                                {mapWork
+                                  ? "Edit choices…"
+                                  : !staged && cur?.origin === "mapped"
+                                    ? "Choose a different letter…"
+                                    : "Choose a finished letter…"}
+                              </button>
+                              {mapWork && (
+                                <button
+                                  className="ghost"
+                                  onClick={() => setMapWork(null)}
+                                >
+                                  Discard
+                                </button>
+                              )}
+                            </div>
+                            {mapWork && (
+                              <small>
+                                {Object.keys(mapWork.picks).length} choice(s)
+                                from {mapWork.name} are not saved yet. They are
+                                stored when you click Save changes.
+                              </small>
+                            )}
+                            {cur?.origin === "prepared" && !staged && (
+                              <small>
+                                This template has a prepared file. Saving
+                                choices from a finished letter replaces it.
+                              </small>
+                            )}
+                          </div>
+                        </div>
+                        {collapse && shownOrigin !== "none" && (
+                          <button
+                            className="ghost small"
+                            style={{ marginTop: 8 }}
+                            onClick={() => setShowOther(true)}
+                          >
+                            {WORDS.steps.otherMethod}
+                          </button>
+                        )}
                         <div
                           style={{
                             display: "flex",
-                            flexDirection: "column",
                             gap: 8,
-                            alignItems: "flex-start",
+                            alignItems: "center",
+                            marginTop: 8,
                           }}
                         >
-                          {!mapWork && !staged && cur?.origin === "mapped" && (
-                            <button onClick={() => setMapSaved(true)}>
-                              Edit choices…
-                            </button>
+                          <small>
+                            {staged
+                              ? `${staged.name} is ready and will be stored when you click Save changes.`
+                              : mapWork
+                                ? `${mapWork.name} is being mapped and will be stored when you click Save changes.`
+                                : cur?.has_file
+                                  ? "A .docx is stored. Design letterhead, fonts and margins in Word."
+                                  : "Choose one of the two options above."}
+                          </small>
+                        </div>
+                        {mapWarn?.id === sel &&
+                          mapWarn.list.map((w, i) => (
+                            <div
+                              key={`m${i}`}
+                              className="notice"
+                              style={{ marginTop: 6 }}
+                            >
+                              {w}
+                            </div>
+                          ))}
+                        {staged?.warnings.map((w, i) => (
+                          <div
+                            key={i}
+                            className="notice"
+                            style={{ marginTop: 6 }}
+                          >
+                            {w}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div hidden={draft && step !== 3}>
+                      <h3 style={{ marginTop: 16 }}>Output layout</h3>
+                      <div className="field">
+                        <label>What this template generates</label>
+                        <select
+                          value={
+                            layoutShown
+                              ? shownOrigin === "mapped" &&
+                                presetId === "two_page"
+                                ? "one_page"
+                                : presetId
+                              : ""
+                          }
+                          onChange={(e) =>
+                            pickPreset(e.target.value as PresetId)
+                          }
+                        >
+                          {!layoutShown && (
+                            <option value="" disabled>
+                              {WORDS.layout.choose}
+                            </option>
                           )}
+                          {layoutOptions(shownOrigin === "mapped").map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.label}
+                            </option>
+                          ))}
+                        </select>
+                        <small>
+                          {shownOrigin === "mapped"
+                            ? WORDS.layout.mapped.hint
+                            : layoutShown
+                              ? PRESETS.find((p) => p.id === presetId)!.hint
+                              : WORDS.layout.chooseHint}
+                        </small>
+                      </div>
+                    </div>
+                    <div hidden={draft && step !== 4}>
+                      <h3 style={{ marginTop: 16 }}>Table columns</h3>
+                      <p className="muted">
+                        Tick the columns for the report table, rename the
+                        headers and use the arrows to reorder. Amount is always
+                        included because the total needs it.
+                      </p>
+                      {plan.columns.map((c, i) => (
+                        <div className="colrow" key={c.key}>
+                          <input
+                            type="checkbox"
+                            checked={c.on}
+                            disabled={c.key === "amount"}
+                            aria-label={`Include ${c.header}`}
+                            onChange={(e) =>
+                              setCol(i, { on: e.target.checked })
+                            }
+                          />
+                          <input
+                            className="grow"
+                            value={c.header}
+                            maxLength={40}
+                            aria-label="Column header"
+                            onChange={(e) =>
+                              setCol(i, { header: e.target.value })
+                            }
+                          />
                           <button
-                            onClick={
-                              mapWork ? () => setMapOpen(true) : pickFinished
+                            className="ghost small icon"
+                            title="Move up"
+                            aria-label="Move up"
+                            disabled={i === 0}
+                            onClick={() => moveCol(i, -1)}
+                          >
+                            <Icon name="arrowUp" />
+                          </button>
+                          <button
+                            className="ghost small icon"
+                            title="Move down"
+                            aria-label="Move down"
+                            disabled={i === plan.columns.length - 1}
+                            onClick={() => moveCol(i, 1)}
+                          >
+                            <Icon name="arrowDown" />
+                          </button>
+                        </div>
+                      ))}
+                      <div className="field" style={{ marginTop: 12 }}>
+                        <label>Total row label</label>
+                        <input
+                          value={plan.totalLabel}
+                          maxLength={40}
+                          onChange={(e) =>
+                            setPlan((pl) => ({
+                              ...pl,
+                              totalLabel: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+
+                      <h3 style={{ marginTop: 16 }}>Saved texts</h3>
+                      <p className="muted">
+                        Fixed wording the template can use, such as the
+                        signatory or subject line. Use the key as a placeholder,
+                        e.g. <code>{"{subject_line}"}</code>.
+                      </p>
+                      {texts.map((t, i) => (
+                        <div className="kv" key={i}>
+                          <input
+                            className="mono"
+                            placeholder="key (a-z, 0-9, _)"
+                            value={t.key}
+                            onChange={(e) =>
+                              setText(i, { key: e.target.value.toLowerCase() })
+                            }
+                          />
+                          <input
+                            placeholder="Text"
+                            value={t.value}
+                            onChange={(e) =>
+                              setText(i, { value: e.target.value })
+                            }
+                          />
+                          <button
+                            className="ghost icon"
+                            title="Remove"
+                            aria-label="Remove"
+                            onClick={() =>
+                              setTexts((x) => x.filter((_, j) => j !== i))
                             }
                           >
-                            {mapWork
-                              ? "Edit choices…"
-                              : !staged && cur?.origin === "mapped"
-                                ? "Choose a different letter…"
-                                : "Choose a finished letter…"}
+                            <Icon name="close" />
                           </button>
-                          {mapWork && (
-                            <button
-                              className="ghost"
-                              onClick={() => setMapWork(null)}
-                            >
-                              Discard
-                            </button>
-                          )}
-                        </div>
-                        {mapWork && (
-                          <small>
-                            {Object.keys(mapWork.picks).length} choice(s) from{" "}
-                            {mapWork.name} are not saved yet. They are stored
-                            when you click Save changes.
-                          </small>
-                        )}
-                        {cur?.origin === "prepared" && !staged && (
-                          <small>
-                            This template has a prepared file. Saving choices
-                            from a finished letter replaces it.
-                          </small>
-                        )}
-                      </div>
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "center",
-                        marginTop: 8,
-                      }}
-                    >
-                      <button
-                        disabled={!hasFile}
-                        onClick={() => setShowDoc(true)}
-                      >
-                        Preview Template
-                      </button>
-                      <small>
-                        {staged
-                          ? `${staged.name} is ready and will be stored when you click Save changes.`
-                          : mapWork
-                            ? `${mapWork.name} is being mapped and will be stored when you click Save changes.`
-                            : cur?.has_file
-                              ? "A .docx is stored. Design letterhead, fonts and margins in Word."
-                              : "Choose one of the two options above."}
-                      </small>
-                    </div>
-                    {mapWarn?.id === sel &&
-                      mapWarn.list.map((w, i) => (
-                        <div
-                          key={`m${i}`}
-                          className="notice"
-                          style={{ marginTop: 6 }}
-                        >
-                          {w}
                         </div>
                       ))}
-                    {staged?.warnings.map((w, i) => (
-                      <div key={i} className="notice" style={{ marginTop: 6 }}>
-                        {w}
-                      </div>
-                    ))}
-                  </div>
-
-                  <h3 style={{ marginTop: 16 }}>Output layout</h3>
-                  <div className="field">
-                    <label>What this template generates</label>
-                    <select
-                      value={layoutChosen ? presetId : ""}
-                      onChange={(e) => pickPreset(e.target.value as PresetId)}
-                    >
-                      {!layoutChosen && (
-                        <option value="" disabled>
-                          Choose a layout…
-                        </option>
-                      )}
-                      {PRESETS.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                    <small>
-                      {layoutChosen
-                        ? PRESETS.find((p) => p.id === presetId)!.hint
-                        : "Choose where the table goes. Required before saving."}
-                    </small>
-                  </div>
-
-                  <h3 style={{ marginTop: 16 }}>Table columns</h3>
-                  <p className="muted">
-                    Tick the columns for the report table, rename the headers
-                    and use the arrows to reorder. Amount is always included
-                    because the total needs it.
-                  </p>
-                  {plan.columns.map((c, i) => (
-                    <div className="colrow" key={c.key}>
-                      <input
-                        type="checkbox"
-                        checked={c.on}
-                        disabled={c.key === "amount"}
-                        aria-label={`Include ${c.header}`}
-                        onChange={(e) => setCol(i, { on: e.target.checked })}
-                      />
-                      <input
-                        className="grow"
-                        value={c.header}
-                        maxLength={40}
-                        aria-label="Column header"
-                        onChange={(e) => setCol(i, { header: e.target.value })}
-                      />
                       <button
-                        className="ghost small icon"
-                        title="Move up"
-                        aria-label="Move up"
-                        disabled={i === 0}
-                        onClick={() => moveCol(i, -1)}
-                      >
-                        <Icon name="arrowUp" />
-                      </button>
-                      <button
-                        className="ghost small icon"
-                        title="Move down"
-                        aria-label="Move down"
-                        disabled={i === plan.columns.length - 1}
-                        onClick={() => moveCol(i, 1)}
-                      >
-                        <Icon name="arrowDown" />
-                      </button>
-                    </div>
-                  ))}
-                  <div className="field" style={{ marginTop: 12 }}>
-                    <label>Total row label</label>
-                    <input
-                      value={plan.totalLabel}
-                      maxLength={40}
-                      onChange={(e) =>
-                        setPlan((pl) => ({ ...pl, totalLabel: e.target.value }))
-                      }
-                    />
-                  </div>
-
-                  <h3 style={{ marginTop: 16 }}>Saved texts</h3>
-                  <p className="muted">
-                    Fixed wording the template can use, such as the signatory or
-                    subject line. Use the key as a placeholder, e.g.{" "}
-                    <code>{"{subject_line}"}</code>.
-                  </p>
-                  {texts.map((t, i) => (
-                    <div className="kv" key={i}>
-                      <input
-                        className="mono"
-                        placeholder="key (a-z, 0-9, _)"
-                        value={t.key}
-                        onChange={(e) =>
-                          setText(i, { key: e.target.value.toLowerCase() })
-                        }
-                      />
-                      <input
-                        placeholder="Text"
-                        value={t.value}
-                        onChange={(e) => setText(i, { value: e.target.value })}
-                      />
-                      <button
-                        className="ghost icon"
-                        title="Remove"
-                        aria-label="Remove"
+                        className="small"
                         onClick={() =>
-                          setTexts((x) => x.filter((_, j) => j !== i))
+                          setTexts((x) => [...x, { key: "", value: "" }])
                         }
                       >
-                        <Icon name="close" />
+                        <Icon name="add" className="ic-inline" /> Add text
                       </button>
-                    </div>
-                  ))}
-                  <button
-                    className="small"
-                    onClick={() =>
-                      setTexts((x) => [...x, { key: "", value: "" }])
-                    }
-                  >
-                    <Icon name="add" className="ic-inline" /> Add text
-                  </button>
 
-                  <div className="help" style={{ marginTop: 16 }}>
-                    <b>Placeholders you can use in the Word file</b>
-                    <ul>
-                      {PLACEHOLDERS.map(([p, d]) => (
-                        <li key={p}>
-                          <code>{p}</code> — {d}
-                        </li>
-                      ))}
-                    </ul>
+                      <div className="help" style={{ marginTop: 16 }}>
+                        <b>Placeholders you can use in the Word file</b>
+                        <ul>
+                          {PLACEHOLDERS.map(([p, d]) => (
+                            <li key={p}>
+                              <code>{p}</code> — {d}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
                   </div>
+                  {draft && (
+                    <div className="tplnav">
+                      <button
+                        disabled={step === 1}
+                        onClick={() => setStep((s) => s - 1)}
+                      >
+                        Back
+                      </button>
+                      <span className="muted">Step {step} of 4</span>
+                      {step < 4 ? (
+                        <button
+                          className="primary"
+                          disabled={!canNext(step)}
+                          onClick={() => setStep((s) => s + 1)}
+                        >
+                          Next
+                        </button>
+                      ) : (
+                        <button
+                          className="primary"
+                          disabled={!canNext(4)}
+                          onClick={requestSave}
+                        >
+                          Save
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <aside className="tplside">
-                  <PlanPreview
-                    plan={plan}
-                    templateName={name.trim() || cur?.name || "New template"}
-                  />
+                  {!(draft && step < 3) && (
+                    <PlanPreview
+                      plan={plan}
+                      templateName={name.trim() || cur?.name || "New template"}
+                      mapped={shownOrigin === "mapped"}
+                      source={previewSource}
+                      mapping={staged ? undefined : mapWork?.mapping}
+                      onOpenLarger={() => setShowDoc(true)}
+                    />
+                  )}
                 </aside>
               </div>
             </div>
@@ -708,11 +831,13 @@ export default function TemplatesScreen({
           <div className="panel pvempty">Create a template to get started.</div>
         )}
       </div>
-      {showDoc && (staged || cur) && (
+      {showDoc && previewSource !== undefined && (
         <DocPreviewDialog
-          title={`Preview: ${staged ? staged.name : cur!.name}`}
-          source={staged ? staged.data : cur!.id}
+          title={`Preview: ${staged?.name ?? mapWork?.name ?? cur?.name ?? "template"}`}
+          source={previewSource}
+          mapping={staged ? undefined : mapWork?.mapping}
           plan={plan}
+          mapped={shownOrigin === "mapped"}
           onClose={() => setShowDoc(false)}
         />
       )}
@@ -742,6 +867,7 @@ export default function TemplatesScreen({
             if (!Object.keys(picks).length)
               return show("No choices left, so nothing was changed.");
             setMapWork({ name: cur.name, data: cur.id, picks, mapping });
+            setPlan((p) => lockInline(p));
           }}
         />
       )}
@@ -769,9 +895,9 @@ export default function TemplatesScreen({
       )}
       {swap && (
         <AskDialog
-          title="Use this file instead?"
+          title="Replace the uploaded word file?"
           danger
-          confirmLabel="Use it"
+          confirmLabel="Replace"
           onResult={(ok) => {
             const go = swap;
             setSwap(null);

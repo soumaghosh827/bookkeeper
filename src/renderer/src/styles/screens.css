@@ -942,7 +942,7 @@
   }
 }
 .tplpanel {
-  animation: tplfade 200ms ease-out;
+  animation: tplfade 300ms ease-out;
 }
 @media (prefers-reduced-motion: reduce) {
   .tplpanel {
@@ -1157,4 +1157,82 @@
   margin-top: var(--sp-2);
   max-height: 200px;
   overflow: auto;
+}
+
+/* Templates: the main column scrolls, the Back / Next bar stays at the bottom */
+.tplmain {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+.tplscroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp-4);
+}
+.tplnav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+/* new template, steps 1 and 2: one centred column, no preview */
+.tplcols.solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+.tplcols.solo .tplside {
+  display: none;
+}
+.tplcols.solo .tplscroll {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.tplcols.solo .tplnav {
+  padding-inline: max(var(--sp-4), calc((100% - 720px) / 2));
+}
+@media (max-width: 1100px) {
+  .tplmain,
+  .tplscroll {
+    overflow: visible;
+  }
+}
+
+/* new template, steps 1 and 2: the form sits in the vertical middle */
+.tplcols.solo .tplscroll {
+  display: flex;
+  flex-direction: column;
+}
+.tplcols.solo .tplscroll > div:not([hidden]) {
+  margin-block: auto;
+}
+
+/* Templates: the real letter shown inline in the right panel */
+.lp-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-sm);
+}
+.lp {
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+}
+.lp-box {
+  width: 100%;
+  min-width: 0;
+  min-height: 160px; /* keeps the panel from jumping while the file loads */
+  overflow: hidden;
+}
+.lp-box .docp-desk {
+  min-width: 0; /* never wider than the panel: the page is scaled to fit instead */
+  padding: 8px;
 }

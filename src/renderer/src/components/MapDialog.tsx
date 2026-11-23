@@ -11,6 +11,7 @@ import DocPreview from "@/components/DocPreview";
 import MapPopover, { type MapPick } from "@/components/MapPopover";
 import MapPreview from "@/components/MapPreview";
 import Modal from "@/components/Modal";
+import { WORDS } from "@shared/words";
 
 const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -61,6 +62,7 @@ export default function MapDialog({
   const [filling, setFilling] = useState(false);
   const [fillError, setFillError] = useState("");
   const [dropped, setDropped] = useState(0); // saved choices that match nothing in the file any more
+  const [tableNote, setTableNote] = useState(false); // an earlier table choice was just set back to No change
   const baseline = useRef(sig(initialPicks ?? {})); // the picks the dialog opened with
 
   useEffect(() => {
@@ -100,15 +102,32 @@ export default function MapDialog({
     };
   }, [source]);
 
+  // Only one table can be replaced: choosing a table puts any other table choice back to No change.
+  // Works on `next` in place and returns true when it removed one.
+  const dropOtherTables = (next: Record<string, MapPick>, id: string) => {
+    if (data?.suggestions.find((x) => x.id === id)?.kind !== "table")
+      return false;
+    let moved = false;
+    for (const o of data.suggestions)
+      if (o.kind === "table" && o.id !== id && next[o.id]) {
+        delete next[o.id];
+        moved = true;
+      }
+    return moved;
+  };
+
   const toggle = (id: string) => {
     const s = data?.suggestions.find((x) => x.id === id);
     if (!s) return;
-    setPicks((prev) => {
-      const next = { ...prev };
-      if (next[id]) delete next[id];
-      else next[id] = defaultPick(s);
-      return next;
-    });
+    const next = { ...picks };
+    if (next[id]) {
+      delete next[id];
+      setTableNote(false);
+    } else {
+      next[id] = defaultPick(s);
+      setTableNote(dropOtherTables(next, id));
+    }
+    setPicks(next);
   };
 
   const openS = open
@@ -140,12 +159,15 @@ export default function MapDialog({
   }
 
   const apply = (id: string, pick: MapPick | null) => {
-    setPicks((prev) => {
-      const next = { ...prev };
-      if (pick) next[id] = pick;
-      else delete next[id];
-      return next;
-    });
+    const next = { ...picks };
+    if (pick) {
+      next[id] = pick;
+      setTableNote(dropOtherTables(next, id));
+    } else {
+      delete next[id];
+      setTableNote(false);
+    }
+    setPicks(next);
     setOpen(null);
   };
 
@@ -238,6 +260,11 @@ export default function MapDialog({
               matched to this file and {dropped === 1 ? "was" : "were"} left
               out. Choose {dropped === 1 ? "it" : "them"} again if you still
               need {dropped === 1 ? "it" : "them"}.
+            </div>
+          )}
+          {tableNote && (
+            <div className="notice" style={{ margin: 12 }}>
+              {WORDS.steps.oneTable}
             </div>
           )}
           <MapPreview

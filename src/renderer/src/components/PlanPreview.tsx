@@ -1,6 +1,8 @@
-import type { OutputPlan, TablePlacement } from "@shared/types";
+import type { DocMapping, OutputPlan, TablePlacement } from "@shared/types";
 import { summarizePlan } from "@shared/planSummary";
 import { tableHeader } from "@shared/format";
+import LetterPreview from "@/components/LetterPreview";
+import { WORDS } from "@shared/words";
 
 /** The table as it will look: your column headers, two sample rows, and the GRAND TOTAL row. `title` adds the optional title bar above it. */
 function SketchTable({ plan, title }: { plan: OutputPlan; title?: boolean }) {
@@ -105,16 +107,35 @@ function ExcelSketch({ plan }: { plan: OutputPlan }) {
 export default function PlanPreview({
   plan,
   templateName,
+  mapped = false,
+  source,
+  mapping,
+  onOpenLarger,
 }: {
   plan: OutputPlan;
   templateName: string;
+  mapped?: boolean; // built from a finished letter: its table position is fixed
+  source?: Uint8Array | number; // the Word file (bytes, or a stored template's id): shows the real letter instead of the sketch
+  mapping?: DocMapping[]; // an unsaved finished letter's choices
+  onOpenLarger?: () => void;
 }) {
-  const s = summarizePlan(plan, templateName);
+  const s = summarizePlan(plan, templateName, mapped);
   return (
     <div className="pp">
       <div className="pp-head">
         <strong>{s.presetLabel}</strong>
         <span className="muted">{s.oneLine}</span>
+        {onOpenLarger &&
+          source !== undefined &&
+          plan.outputs.some((o) => o.kind === "docx") && (
+            <button
+              className="small"
+              style={{ marginLeft: "auto", alignSelf: "center" }}
+              onClick={onOpenLarger}
+            >
+              {WORDS.preview.openLarger}
+            </button>
+          )}
       </div>
       {plan.outputs.map((o, i) => (
         <section key={o.id} className="pp-out">
@@ -129,6 +150,13 @@ export default function PlanPreview({
           <div className="pp-body">
             {o.kind === "xlsx" ? (
               <ExcelSketch plan={plan} />
+            ) : source !== undefined ? (
+              <LetterPreview
+                source={source}
+                plan={plan}
+                mapped={mapped}
+                mapping={mapping}
+              />
             ) : (
               <WordSketch plan={plan} table={o.table} />
             )}

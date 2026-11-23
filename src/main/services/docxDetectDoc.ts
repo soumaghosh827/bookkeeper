@@ -95,10 +95,16 @@ function columnKeyOf(header: string, taken: Set<string>): string | undefined {
   return undefined;
 }
 
-// Offers the table as {@table} when its header row looks like the app's report table.
-// Header row = first row, or second when the first is a title row. Returns true when offered.
+// Offers the table as {@table} when a header row in it looks like the app's report table.
+// The header can sit below banner or title rows, so each of the first MAX_HEADER_SCAN rows is scored by how many
+// report columns it matches, and the best row wins (the earliest one on a tie). Returns true when offered.
+const MAX_HEADER_SCAN = 25;
 function detectTable(t: DocTable, ctx: Ctx): boolean {
-  for (let i = 0; i < Math.min(2, t.rows.length); i++) {
+  let best:
+    | { i: number; shown: string[]; matched: string[]; size: number }
+    | undefined;
+  // "- 1" keeps at least one row below the header
+  for (let i = 0; i < Math.min(MAX_HEADER_SCAN, t.rows.length - 1); i++) {
     const shown = t.rows[i].cells
       .map((c) => cellText(c.blocks))
       .filter(Boolean);
@@ -115,23 +121,27 @@ function detectTable(t: DocTable, ctx: Ctx): boolean {
     // letterheads and label tables fail here: need 3+ columns incl. amount or payee
     if (taken.size < 3 || !(taken.has("amount") || taken.has("payee")))
       continue;
-    const rows = t.rows.length - i - 1;
-    if (rows < 1) continue;
-    const summary = shown.join(" | ");
-    ctx.out.push({
-      id: "",
-      kind: "table",
-      addr: t.addr,
-      text: summary.length > 80 ? summary.slice(0, 79) + "…" : summary,
-      tag: "@table",
-      options: ["@table"],
-      confidence: taken.size >= 4 ? "likely" : "possible",
-      reason: `${taken.size} of ${shown.length} columns match the app's report table`,
-      table: { headers: shown, matched, rows },
-    });
-    return true;
+    if (!best || taken.size > best.size)
+      best = { i, shown, matched, size: taken.size };
   }
-  return false;
+  if (!best) return false;
+  const summary = best.shown.join(" | ");
+  ctx.out.push({
+    id: "",
+    kind: "table",
+    addr: t.addr,
+    text: summary.length > 80 ? summary.slice(0, 79) + "…" : summary,
+    tag: "@table",
+    options: ["@table"],
+    confidence: best.size >= 4 ? "likely" : "possible",
+    reason: `${best.size} of ${best.shown.length} columns match the app's report table`,
+    table: {
+      headers: best.shown,
+      matched: best.matched,
+      rows: t.rows.length - best.i - 1,
+    },
+  });
+  return true;
 }
 
 interface Ctx {

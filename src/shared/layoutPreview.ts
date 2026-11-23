@@ -107,6 +107,10 @@ const isMarker = (b: DocBlock) =>
     .join("")
     .trim() === "{@table}";
 
+/** True when the letter has a {@table} paragraph for the table to replace. */
+export const hasTableMarker = (model: DocModel): boolean =>
+  !!model.parts.find((p) => p.kind === "body")?.blocks.some(isMarker);
+
 /** The Word placement of a plan: what its first Word output does with the table. */
 export function wordPlacement(plan: OutputPlan): TablePlacement | null {
   return plan.outputs.find((o) => o.kind === "docx")?.table ?? null;

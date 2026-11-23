@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import type { DocModel, OutputPlan } from "@shared/types";
-import { withLayout, wordPlacement } from "@shared/layoutPreview";
+import { useState } from "react";
+import type { DocMapping, OutputPlan } from "@shared/types";
+import { useLetterPreview } from "@/lib/useLetterPreview";
 import DocPreview from "@/components/DocPreview";
 import Modal from "@/components/Modal";
 
@@ -11,53 +11,24 @@ export default function DocPreviewDialog({
   title,
   source,
   plan,
+  mapped = false,
+  mapping,
   onClose,
 }: {
   title: string;
   source: Uint8Array | number;
   plan?: OutputPlan; // when given, the preview shows the table where this layout puts it
+  mapped?: boolean; // finished letter: never mention {@table}
+  mapping?: DocMapping[]; // unsaved finished letter: its choices, shown applied
   onClose: () => void;
 }) {
-  const [model, setModel] = useState<DocModel | null>(null);
-  const [error, setError] = useState("");
   const [zoom, setZoom] = useState(1);
-
-  useEffect(() => {
-    let stale = false;
-    setModel(null);
-    setError("");
-    window.api.templates
-      .inspect(source)
-      .then((r) => {
-        if (stale) return;
-        if (r.ok && r.data) setModel(r.data);
-        else setError(r.error ?? "Could not read this file");
-      })
-      .catch((e) => {
-        if (!stale)
-          setError((e as Error).message || "Could not read this file");
-      });
-    return () => {
-      stale = true;
-    };
-  }, [source]);
-
-  const placement = plan ? wordPlacement(plan) : null;
-  const shown = useMemo(
-    () =>
-      model && plan && placement ? withLayout(model, plan, placement) : model,
-    [model, plan, placement],
+  const { shown, error, note } = useLetterPreview(
+    source,
+    plan,
+    mapped,
+    mapping,
   );
-  const note =
-    !plan || !placement
-      ? ""
-      : placement === "inline"
-        ? "Sample table shown where {@table} is in the letter (at the end if there is none)."
-        : placement === "new_page"
-          ? "Sample table shown on a new page after the letter."
-          : plan.outputs.some((o) => o.kind === "xlsx")
-            ? "The letter has no table. The table goes to a separate Excel file."
-            : "The letter has no table.";
   const i = ZOOMS.indexOf(zoom);
   return (
     <Modal

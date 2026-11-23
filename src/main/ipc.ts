@@ -424,6 +424,19 @@ export function registerIpc() {
       };
     }),
   );
+  // The letter as the saved template will hold it: choices applied, {tags} and the {@table} marker in place. Stores nothing.
+  H("tpl:inspectMapped", (_e, src: Uint8Array | number, mapping: unknown) =>
+    run<DocModel>(() => {
+      const s = loadSource(src);
+      if (!s.ok || !s.data) return { ok: false, error: s.error };
+      const v = validateMapping(mapping);
+      if (!v.ok) return { ok: false, error: v.error };
+      const buf = v.mapping.length
+        ? applyMapping(s.data.buf, v.mapping)
+        : s.data.buf;
+      return { ok: true, data: readDocxModel(buf) };
+    }),
+  );
   // The result of the choices on fake data, for a "see it filled" preview. Stores nothing.
   H("tpl:testFill", (_e, src: Uint8Array | number, mapping: unknown) =>
     run<DocModel>(() => {

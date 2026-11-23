@@ -1,27 +1,57 @@
 # Build outputs and caches
+
 out/
 dist/
 release/
-*.tsbuildinfo
+scripts/
+\*.tsbuildinfo
 
 # Lockfiles (saves massive amounts of tokens)
+
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
 # Sensitive data and databases
-*.db
-*.db-wal
-*.db-shm
-*.db-journal
+
+_.db
+_.db-wal
+_.db-shm
+_.db-journal
 keystore.json
-*.keystore.json
+_.keystore.json
 .env
-.env.*
-*.xlsx
-*.xls
-*.csv
+.env._
+_.xlsx
+_.xls
+\*.csv
 
 # Logs and output dump
-*.log
+
+\*.log
 codebase.md
+codebase_src.md
+
+# --- ADDITIONS TO REDUCE TOKEN BLOAT ---
+
+# Auto-generated docs (source of truth is src/shared/importCases.ts)
+
+IMPORT_CASES.md
+
+# Standalone test scripts & one-off build helpers
+
+scripts/
+
+# Static icons and SVGs
+
+resources/
+src/renderer/src/assets/
+
+# CI, packaging & redundant repo docs
+
+.github/
+.gitignore
+electron-builder.yml
+tsconfig\*.json
+README.md
+STYLE_GUIDE.md

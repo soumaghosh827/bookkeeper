@@ -5,52 +5,27 @@ import {
   type TablePlacement,
 } from "./types";
 import { todayIso } from "./format";
+import { WORDS } from "./words";
 
-export type PresetId = "one_page" | "two_page" | "letter_excel" | "custom";
+export type PresetId = "one_page" | "two_page" | "letter_excel";
 
 /** The options of the layout selector in the Templates tab, in display order. */
 export const PRESETS: readonly { id: PresetId; label: string; hint: string }[] =
   [
-    {
-      id: "one_page",
-      label: "Table inside the letter",
-      hint: "One Word file. The table goes where {@table} is in the letter, or at the end if there is none.",
-    },
-    {
-      id: "two_page",
-      label: "Table on a new page",
-      hint: "One Word file. The letter comes first, then the table starts on a new page.",
-    },
-    {
-      id: "letter_excel",
-      label: "Word letter + separate Excel table",
-      hint: "Two files: the letter without a table, and the table as an Excel file.",
-    },
-    {
-      id: "custom",
-      label: "Custom",
-      hint: "Choose the outputs yourself.",
-    },
+    { id: "one_page", ...WORDS.layout.one_page },
+    { id: "two_page", ...WORDS.layout.two_page },
+    { id: "letter_excel", ...WORDS.layout.letter_excel },
   ];
 
-/** Which preset a plan matches. Nothing extra is stored: the outputs themselves decide. Anything else is 'custom'. */
+/** The layout nearest to a plan's outputs. Nothing extra is stored: the outputs themselves decide. Always returns a real layout. */
 export function detectPreset(plan: OutputPlan): PresetId {
-  const o = plan.outputs;
-  if (o.length === 1 && o[0].kind === "docx") {
-    if (o[0].table === "inline") return "one_page";
-    if (o[0].table === "new_page") return "two_page";
-  }
-  if (o.length === 2) {
-    const d = o.find((s) => s.kind === "docx");
-    const e = o.find((s) => s.kind === "xlsx");
-    if (d && e && d.table === "none") return "letter_excel";
-  }
-  return "custom";
+  if (plan.outputs.some((s) => s.kind === "xlsx")) return "letter_excel";
+  const d = plan.outputs.find((s) => s.kind === "docx");
+  return d?.table === "new_page" ? "two_page" : "one_page";
 }
 
-/** Plan with the outputs of a preset. Columns and total label are kept, and so are existing file name patterns. 'custom' changes nothing. */
+/** Plan with the outputs of a preset. Columns and total label are kept, and so are existing file name patterns. */
 export function applyPreset(plan: OutputPlan, id: PresetId): OutputPlan {
-  if (id === "custom") return plan;
   const nameOf = (kind: OutputSpec["kind"]) =>
     plan.outputs.find((o) => o.kind === kind)?.name ?? DEFAULT_FILE_NAME;
   const docx = (table: TablePlacement): OutputSpec => ({
@@ -72,6 +47,20 @@ export function applyPreset(plan: OutputPlan, id: PresetId): OutputPlan {
         ? [docx("new_page")]
         : [docx("none"), xlsx];
   return { ...plan, outputs };
+}
+
+/** A finished letter decides where its table goes, so a forced new page becomes the {@table} position. Nothing else changes. */
+export function lockInline(plan: OutputPlan): OutputPlan {
+  if (!plan.outputs.some((o) => o.kind === "docx" && o.table === "new_page"))
+    return plan;
+  return {
+    ...plan,
+    outputs: plan.outputs.map((o) =>
+      o.kind === "docx" && o.table === "new_page"
+        ? { ...o, table: "inline" as const }
+        : o,
+    ),
+  };
 }
 
 const safe = (s: string) =>
@@ -111,17 +100,25 @@ export interface PlanSummary {
   oneLine: string; // e.g. "Word letter + Excel table · 7 columns"
 }
 
-const WORD_NOTE: Record<TablePlacement, string> = {
-  inline:
-    "Table at the {@table} marker (at the end of the letter if the Word file has none)",
-  new_page: "Table starts on a new page",
-  none: "Letter only, no table",
-};
+const WORD_NOTE: Record<TablePlacement, string> = WORDS.note.word;
+const MAPPED_NOTE: Record<TablePlacement, string> = WORDS.note.mappedWord;
+const MAPPED_LABEL: Record<PresetId, string> = WORDS.layout.mapped.label;
+
+/** Layout choices for the selector. A finished letter fixes its own table position, so it only offers letter-only or letter + Excel. */
+export function layoutOptions(mapped: boolean) {
+  return mapped
+    ? PRESETS.filter((p) => p.id !== "two_page").map((p) => ({
+        id: p.id,
+        label: MAPPED_LABEL[p.id],
+      }))
+    : PRESETS.map((p) => ({ id: p.id, label: p.label }));
+}
 
 /** Everything a preview needs to say what a template will generate. */
 export function summarizePlan(
   plan: OutputPlan,
   templateName: string,
+  mapped = false,
 ): PlanSummary {
   const preset = detectPreset(plan);
   const used = new Set<string>();
@@ -131,8 +128,8 @@ export function summarizePlan(
     fileName: expandFileName(o, templateName, used),
     note:
       o.kind === "xlsx"
-        ? "Table only. Row 1 blank, optional title in row 2, then the table"
-        : WORD_NOTE[o.table],
+        ? WORDS.note.excel
+        : (mapped ? MAPPED_NOTE : WORD_NOTE)[o.table],
   }));
   const headers = plan.columns.filter((c) => c.on).map((c) => c.header);
   const kinds = [
@@ -141,7 +138,9 @@ export function summarizePlan(
   ].filter(Boolean);
   return {
     preset,
-    presetLabel: PRESETS.find((p) => p.id === preset)!.label,
+    presetLabel: mapped
+      ? MAPPED_LABEL[preset]
+      : PRESETS.find((p) => p.id === preset)!.label,
     outputs,
     headers,
     totalLabel: plan.totalLabel,

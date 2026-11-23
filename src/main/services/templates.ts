@@ -311,7 +311,7 @@ export function explain(e: any): string {
   const errs = e?.properties?.errors;
   if (Array.isArray(errs) && errs.length)
     return errs
-      .slice(0, 3)
+      .slice(0, 1)
       .map((x: any) => x?.properties?.explanation || x?.message)
       .join("; ");
   return e?.message ?? "Unknown error";

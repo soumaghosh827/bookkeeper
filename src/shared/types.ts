@@ -556,6 +556,31 @@ export interface TxRefInfo {
   tx_count: number; // transactions that carry this reference
 }
 
+export interface ReportListRow {
+  id: number;
+  created_at: string;
+  template_name: string;
+  file_name: string;
+  item_count: number;
+  total_paise: number;
+  ref_no: string;
+  report_date: string; // YYYY-MM-DD
+}
+
+export interface ReportListPage {
+  rows: ReportListRow[];
+  total: number; // all matches, not only this page
+}
+
+export interface ReportItemRow {
+  uid: string;
+  payee: string;
+  account_no: string;
+  amount_paise: number;
+  entry_date: string;
+  deleted: boolean; // the transaction was deleted after the report
+}
+
 export interface RecentRef {
   ref_no: string;
   report_date: string; // YYYY-MM-DD
@@ -884,6 +909,14 @@ export interface BookkeeperApi {
     ): Promise<Result<{ path: string }>>; // one file: Save-As dialog; several: folder picker. Error 'Cancelled' keeps the prepared report
     discard(): Promise<void>;
     pastRefs(search?: string): Promise<TxRefInfo[]>; // distinct references on existing transactions, highest number first
+    list(q: {
+      search?: string;
+      from?: string; // YYYY-MM-DD
+      to?: string; // YYYY-MM-DD
+      limit?: number;
+      offset?: number;
+    }): Promise<ReportListPage>; // saved reports, newest first
+    items(id: number): Promise<ReportItemRow[]>; // transactions of one saved report
     recentRefs(limit?: number): Promise<RecentRef[]>; // references of the latest saved reports, newest first, no repeats
     preview(fileId: string): Promise<Result<DocModel>>; // Word model of a prepared docx output (ReportFile.id)
     print(

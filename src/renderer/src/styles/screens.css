@@ -93,6 +93,12 @@
 .entry .panel > .body {
   flex: 1;
 }
+/* both panel headers share one height, so their bottom lines match */
+.entry .panel > header {
+  min-height: calc(
+    var(--control-h) - 6px + var(--sp-3) * 2 + 1px
+  ); /* small button + padding + border */
+}
 .fgrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -143,7 +149,19 @@
 .savebar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--sp-3);
+}
+.savebar button {
+  flex: none;
+}
+.savebar .savehint {
+  display: flex;
+  flex-direction: column; /* two short lines */
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.9; /* keys have borders, so lines need air */
+  color: var(--text-muted);
 }
 .savebar .grow {
   flex: 1;
@@ -199,6 +217,79 @@
 .pv th button.pvsort.on {
   color: var(--text);
 }
+
+/* ----- Reports tab ----- */
+.rptwrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+}
+.toolbar input.rptdate {
+  width: 120px;
+}
+.rptdate[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+/* the shared .pv table treats column 1 as a narrow row number; here it is the date */
+.pv.rpt th:first-child,
+.pv.rpt td:first-child {
+  width: auto;
+  color: inherit;
+}
+.pv.rpt td {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pv.rpt td.r {
+  max-width: none;
+}
+.pv.rpt td.dim {
+  color: var(--text-muted);
+}
+.pv.rpt tr.rptrow {
+  cursor: pointer;
+}
+.pv.rpt tr.rptrow[aria-expanded="true"] td {
+  background: var(--surface-2, var(--surface));
+  font-weight: 600;
+}
+.pv.rpt .rptchev {
+  color: var(--text-muted);
+}
+.pv.rpt tr.rptdetail > td {
+  max-width: none;
+  white-space: normal;
+  padding: var(--sp-2) var(--sp-4) var(--sp-3) var(--sp-6);
+  background: var(--surface-2, var(--surface));
+}
+.rptitems {
+  width: 100%;
+  border-collapse: collapse;
+}
+.rptitems td {
+  padding: 3px var(--sp-3);
+  font-weight: 400;
+  background: transparent;
+}
+.rptitems td.n {
+  width: 40px;
+  color: var(--text-muted);
+}
+.rptempty {
+  padding: var(--sp-6);
+  color: var(--text-muted);
+}
+.rptmore {
+  display: flex;
+  justify-content: center;
+  padding: var(--sp-3);
+}
 .pv th button.pvsort .ind {
   display: inline-flex;
   color: var(--brand);
@@ -250,9 +341,51 @@
   flex-wrap: wrap;
   align-items: center;
 }
-.pvactions select {
+/* template row: label on the left, dropdown on the right */
+.pvtpl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--sp-3);
+  row-gap: var(--sp-1);
+  margin-bottom: var(--sp-3);
+}
+.pvtpl .pvout {
+  grid-column: 2; /* sits under the dropdown */
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pvactions .primary {
   flex: 1;
-  min-width: 160px;
+}
+
+/* report footer: Reference no + Date row */
+.pvform {
+  display: grid;
+  grid-template-columns: 1fr 140px;
+  column-gap: var(--sp-3);
+  align-items: start;
+  margin-bottom: var(--sp-3);
+}
+.pvform .field {
+  margin-bottom: 0;
+}
+/* same height with or without the links, so both inputs sit on one line */
+.pvlabrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-height: 22px;
+}
+/* same look as the grid column headers */
+.pvlab {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-muted);
 }
 
 /* ----- Import ----- */

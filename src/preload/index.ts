@@ -101,6 +101,8 @@ const api: BookkeeperApi = {
     discard: () => inv("rep:discard"),
     recentRefs: (limit) => inv("rep:recentRefs", limit),
     pastRefs: (search) => inv("rep:pastRefs", search),
+    list: (q) => inv("rep:list", q),
+    items: (id) => inv("rep:items", id),
     preview: (fileId) => inv("rep:preview", fileId),
     print: (fileId, record, page) => inv("rep:print", fileId, record, page),
   },

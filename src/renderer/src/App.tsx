@@ -16,8 +16,15 @@ import { Toast, useToast } from "./components/Toast";
 import { applyTheme, applyThemeHint, saveThemeHint } from "./lib/theme";
 import Icon, { type IconName } from "./components/Icon";
 import AskDialog from "./components/AskDialog";
+import ReportsScreen from "./screens/ReportsScreen";
 
-type Tab = "entry" | "master" | "transactions" | "templates" | "settings";
+type Tab =
+  | "entry"
+  | "master"
+  | "transactions"
+  | "templates"
+  | "reports"
+  | "settings";
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
@@ -74,7 +81,7 @@ export default function App() {
     }
   }, [state, loadSettings, loadUnit]);
 
-  // Ctrl+1..5 switches tabs
+  // Ctrl+1..6 switches tabs (same order as the tab buttons)
   useEffect(() => {
     if (state !== "unlocked") return;
     const tabs: Tab[] = [
@@ -82,6 +89,7 @@ export default function App() {
       "master",
       "transactions",
       "templates",
+      "reports",
       "settings",
     ];
     const f = (e: KeyboardEvent) => {
@@ -89,7 +97,7 @@ export default function App() {
         (e.ctrlKey || e.metaKey) &&
         !e.shiftKey &&
         !e.altKey &&
-        /^[1-5]$/.test(e.key)
+        /^[1-6]$/.test(e.key)
       ) {
         e.preventDefault();
         goTab(tabs[+e.key - 1]);
@@ -143,6 +151,7 @@ export default function App() {
     ["master", masterName, "accounts"],
     ["transactions", "Transactions", "transactions"],
     ["templates", "Templates", "templates"],
+    ["reports", "Reports", "reports"],
     ["settings", "Settings", "settings"],
   ];
 
@@ -211,6 +220,9 @@ export default function App() {
             onChanged={bumpTx}
             onMasterChanged={bumpMaster}
           />
+        </section>
+        <section className="screen" hidden={tab !== "reports"}>
+          <ReportsScreen refreshKey={txV} />
         </section>
         {tab === "templates" && (
           <section className="screen">

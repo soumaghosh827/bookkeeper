@@ -490,6 +490,30 @@ export function registerIpc() {
       Math.min(Math.max(Math.trunc(Number(limit)) || 8, 1), 50),
     ),
   );
+  // saved reports for the Reports tab
+  H(
+    "rep:list",
+    (
+      _e,
+      q?: {
+        search?: string;
+        from?: string;
+        to?: string;
+        limit?: number;
+        offset?: number;
+      },
+    ) =>
+      rep.listReports(db(), {
+        search: String(q?.search ?? ""),
+        from: String(q?.from ?? ""),
+        to: String(q?.to ?? ""),
+        limit: Number(q?.limit),
+        offset: Number(q?.offset),
+      }),
+  );
+  H("rep:items", (_e, id: number) =>
+    rep.reportItems(db(), Math.trunc(Number(id)) || 0),
+  );
   // references on existing transactions, highest number first (for the Entry screen's "Past transaction refs")
   H("rep:pastRefs", (_e, search?: string) =>
     listRefs(db(), String(search ?? "").slice(0, 100)),

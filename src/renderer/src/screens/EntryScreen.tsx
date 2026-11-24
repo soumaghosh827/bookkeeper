@@ -141,6 +141,13 @@ export default function EntryScreen({
 
   const refs = useRef<Record<string, HTMLInputElement | null>>({});
   const seq = useRef(0);
+  const sugTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (sugTimer.current) clearTimeout(sugTimer.current);
+    },
+    [],
+  );
   const saving = useRef(false);
   const { toast, show, hide } = useToast();
   const { withConfirm, element } = useConfirmFlow();
@@ -221,19 +228,24 @@ export default function EntryScreen({
   };
 
   // ---------- suggestions: each box searches ONLY its own column ----------
-  async function openSuggest(field: SearchKey, text: string, all = false) {
+  const SUGGEST_MIN_CHARS = 2; // one letter matches half of a big master
+  const SUGGEST_DELAY_MS = 150; // fast typing runs one search, not one per key
+  async function runSuggest(field: SearchKey, text: string) {
     const el = refs.current[field];
-    if (!el || (!text.trim() && !all)) return setSug(null);
     const id = ++seq.current;
-    const items = await window.api.accounts.search(field, all ? "" : text);
-    if (id !== seq.current) return; // a newer keystroke already replaced this result
-    setSug({
-      field,
-      items,
-      idx: 0,
-      text: all ? "" : text,
-      rect: el.getBoundingClientRect(),
-    });
+    if (!el || document.activeElement !== el) return; // moved on to another field
+    const items = await window.api.accounts.search(field, text);
+    if (id !== seq.current || document.activeElement !== el) return; // stale reply
+    setSug({ field, items, idx: 0, text, rect: el.getBoundingClientRect() });
+  }
+  function openSuggest(field: SearchKey, text: string) {
+    if (sugTimer.current) clearTimeout(sugTimer.current);
+    seq.current++; // drops any reply still on its way
+    if (text.trim().length < SUGGEST_MIN_CHARS) return setSug(null);
+    sugTimer.current = setTimeout(
+      () => runSuggest(field, text),
+      SUGGEST_DELAY_MS,
+    );
   }
   function pick(a: Account) {
     setD((x) => ({
@@ -287,11 +299,6 @@ export default function EntryScreen({
     if (e.nativeEvent.isComposing) return;
     const isAcc = (ACC as string[]).includes(key);
     if (isAcc && !locked) {
-      if (e.altKey && e.key === "ArrowDown") {
-        e.preventDefault();
-        openSuggest(key as SearchKey, d[key], true);
-        return;
-      }
       if (sug && sug.field === key) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
@@ -586,17 +593,23 @@ export default function EntryScreen({
                 </div>
               </div>
             )}
+          </div>
+          <footer>
             <div className="savebar">
+              <div className="savehint">
+                <span>
+                  <kbd>Enter</kbd> next box
+                </span>
+                <span>
+                  <kbd>Ctrl</kbd>+<kbd>Enter</kbd> or <kbd>Enter</kbd> on Amount
+                  saves
+                </span>
+              </div>
               <button className="primary" onClick={save}>
                 Save transaction
               </button>
-              <span className="grow" style={{ flex: 1 }} />
-              <small>
-                <kbd>Enter</kbd> next · on amount <kbd>Enter</kbd> saves ·{" "}
-                <kbd>Ctrl</kbd>+<kbd>Enter</kbd> saves
-              </small>
             </div>
-          </div>
+          </footer>
         </section>
 
         {/* ---------- right: working list + report ---------- */}
@@ -693,28 +706,16 @@ export default function EntryScreen({
               </span>
               <span className="big">₹{formatPaise(total)}</span>
             </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 140px",
-                gap: "var(--sp-2)",
-                marginBottom: "var(--sp-2)",
-              }}
-            >
+            <div className="pvform">
               <div
                 className="field"
                 ref={refBox}
                 style={{ position: "relative" }}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "baseline",
-                    justifyContent: "space-between",
-                    gap: "var(--sp-2)",
-                  }}
-                >
-                  <label htmlFor="rep-ref">Reference no</label>
+                <div className="pvlabrow">
+                  <label className="pvlab" htmlFor="rep-ref">
+                    Reference no
+                  </label>
                   <span
                     style={{
                       display: "inline-flex",
@@ -877,7 +878,11 @@ export default function EntryScreen({
                 )}
               </div>
               <div className="field">
-                <label htmlFor="rep-date">Date</label>
+                <div className="pvlabrow">
+                  <label className="pvlab" htmlFor="rep-date">
+                    Date
+                  </label>
+                </div>
                 <input
                   id="rep-date"
                   value={repDate}
@@ -886,15 +891,18 @@ export default function EntryScreen({
                 />
               </div>
             </div>
-            <div className="pvactions">
+            <div className="pvtpl">
+              <label className="pvlab" htmlFor="rep-tpl">
+                Choose template
+              </label>
               <select
-                aria-label="Template"
+                id="rep-tpl"
                 value={tplId}
                 onChange={(e) =>
                   setTplId(e.target.value ? Number(e.target.value) : "")
                 }
               >
-                <option value="">Choose template…</option>
+                <option value="">Select…</option>
                 {tplGroups.map(([format, list]) => (
                   <optgroup key={format} label={format}>
                     {list.map((t) => (
@@ -906,6 +914,13 @@ export default function EntryScreen({
                   </optgroup>
                 ))}
               </select>
+              {tplSel && (
+                <div className="pvout" title={tplSel.name}>
+                  Output: {tplSel.format}
+                </div>
+              )}
+            </div>
+            <div className="pvactions">
               <button
                 className="primary"
                 disabled={!rows.length}
@@ -921,15 +936,6 @@ export default function EntryScreen({
                 Clear list
               </button>
             </div>
-            {tplSel && (
-              <div
-                className="muted"
-                style={{ fontSize: "var(--fs-sm)", marginTop: 6 }}
-                title={tplSel.name}
-              >
-                Output: {tplSel.format}
-              </div>
-            )}
           </footer>
         </section>
       </div>

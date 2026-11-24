@@ -19,6 +19,7 @@ import {
   Settings,
   SquarePen,
   Users,
+  ClipboardList,
   type LucideIcon,
 } from "lucide-react";
 
@@ -40,6 +41,7 @@ const ICONS = {
   accounts: Users,
   transactions: ArrowLeftRight,
   templates: FileText,
+  reports: ClipboardList,
   settings: Settings,
   lock: Lock,
   eye: Eye,

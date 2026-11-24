@@ -65,16 +65,7 @@ export function searchAccounts(
 ): Account[] {
   if (!(SEARCH_KEYS as readonly string[]).includes(field)) return [];
   const t = String(text).trim().toLowerCase();
-  if (!t) {
-    // empty text (Alt+Down): the most used accounts for this field
-    return (
-      db
-        .prepare(
-          `SELECT * FROM accounts WHERE in_master = 1 AND ${field} <> '' ORDER BY use_count DESC, last_used_at DESC, payee COLLATE NOCASE LIMIT ?`,
-        )
-        .all(limit) as any[]
-    ).map(toAccount);
-  }
+  if (!t) return []; // nothing typed, nothing to suggest (browse the full list in the Master tab)
   return (
     db
       .prepare(

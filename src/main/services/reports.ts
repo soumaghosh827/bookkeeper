@@ -12,6 +12,9 @@ import {
   type TablePlacement,
   type TxRow,
   type OutputSpec,
+  type ReportListRow,
+  type ReportListPage,
+  type ReportItemRow,
 } from "@shared/types";
 import {
   fmtDate,
@@ -554,4 +557,72 @@ export function recentRefs(
     if (out.length >= limit) break;
   }
   return out;
+}
+
+const REPORT_DAY =
+  "COALESCE(NULLIF(report_date, ''), substr(created_at, 1, 10))";
+
+/** Saved reports, newest first. Search looks in reference, template and file name; from/to are YYYY-MM-DD. */
+export function listReports(
+  db: DB,
+  q: {
+    search?: string;
+    from?: string;
+    to?: string;
+    limit?: number;
+    offset?: number;
+  },
+): ReportListPage {
+  const where: string[] = [];
+  const args: (string | number)[] = [];
+  const s = String(q.search ?? "")
+    .trim()
+    .slice(0, 100);
+  if (s) {
+    const like = `%${s.replace(/[\\%_]/g, "\\$&")}%`;
+    where.push(
+      "(ref_no LIKE ? ESCAPE '\\' OR template_name LIKE ? ESCAPE '\\' OR file_name LIKE ? ESCAPE '\\')",
+    );
+    args.push(like, like, like);
+  }
+  if (q.from && /^\d{4}-\d{2}-\d{2}$/.test(q.from)) {
+    where.push(`${REPORT_DAY} >= ?`);
+    args.push(q.from);
+  }
+  if (q.to && /^\d{4}-\d{2}-\d{2}$/.test(q.to)) {
+    where.push(`${REPORT_DAY} <= ?`);
+    args.push(q.to);
+  }
+  const w = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const limit = Math.min(Math.max(Math.trunc(q.limit ?? 50) || 50, 1), 200);
+  const offset = Math.max(Math.trunc(q.offset ?? 0) || 0, 0);
+  const total = (
+    db.prepare(`SELECT COUNT(*) AS n FROM reports ${w}`).get(...args) as {
+      n: number;
+    }
+  ).n;
+  const rows = db
+    .prepare(
+      `SELECT id, created_at, template_name, file_name, item_count, total_paise, ref_no,
+              ${REPORT_DAY} AS report_date
+         FROM reports ${w} ORDER BY id DESC LIMIT ? OFFSET ?`,
+    )
+    .all(...args, limit, offset) as ReportListRow[];
+  return { rows, total };
+}
+
+/** Transactions of one saved report. Deleted ones stay in the list, marked. */
+export function reportItems(db: DB, id: number): ReportItemRow[] {
+  const rows = db
+    .prepare(
+      `SELECT t.uid, a.payee, a.account_no, t.amount_paise, t.entry_date,
+              t.deleted_at IS NOT NULL AS deleted
+         FROM report_items ri
+         JOIN transactions t ON t.uid = ri.tx_uid
+         JOIN accounts a ON a.id = t.account_id
+        WHERE ri.report_id = ?
+        ORDER BY t.entry_date, a.payee COLLATE NOCASE`,
+    )
+    .all(id) as (Omit<ReportItemRow, "deleted"> & { deleted: number })[];
+  return rows.map((r) => ({ ...r, deleted: !!r.deleted }));
 }

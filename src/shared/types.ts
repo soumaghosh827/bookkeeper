@@ -551,12 +551,24 @@ export interface ReportFile {
   sheet?: ReportSheet; // xlsx outputs only: what the Excel tab of the preview shows
 }
 
+export interface TxRefInfo {
+  ref_no: string;
+  tx_count: number; // transactions that carry this reference
+}
+
+export interface RecentRef {
+  ref_no: string;
+  report_date: string; // YYYY-MM-DD
+  item_count: number; // transactions in that report
+}
+
 export interface ReportPrepared {
   fileName: string; // first file's name
   files: ReportFile[];
   templateName: string;
   count: number;
   total_paise: number;
+  canAddExcel?: boolean; // true when the template makes no Excel file itself, so the dialog may offer "also save an Excel table"
 }
 
 // ---- report output plan: per template, stored as JSON in templates.output_plan ----
@@ -864,12 +876,15 @@ export interface BookkeeperApi {
       title?: string,
       refNo?: string, // one reference for the whole report
       reportDate?: string, // YYYY-MM-DD or dd/mm/yyyy; empty = today
+      extraExcel?: boolean, // also build a separate Excel table, even when the template makes none
     ): Promise<Result<ReportPrepared>>;
     save(
       record: boolean,
       names?: Record<string, string>, // output id -> edited file name
     ): Promise<Result<{ path: string }>>; // one file: Save-As dialog; several: folder picker. Error 'Cancelled' keeps the prepared report
     discard(): Promise<void>;
+    pastRefs(search?: string): Promise<TxRefInfo[]>; // distinct references on existing transactions, highest number first
+    recentRefs(limit?: number): Promise<RecentRef[]>; // references of the latest saved reports, newest first, no repeats
     preview(fileId: string): Promise<Result<DocModel>>; // Word model of a prepared docx output (ReportFile.id)
     print(
       fileId: string,

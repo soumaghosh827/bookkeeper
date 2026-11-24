@@ -23,6 +23,7 @@ import * as cc from "./services/customColumns";
 import * as prev from "./services/preview";
 import * as tpl from "./services/templates";
 import * as rep from "./services/reports";
+import { listRefs } from "./services/txReferences";
 import { readDocxModel } from "./services/docxModel";
 import { applyMapping } from "./services/docxMap";
 import { detectDocument } from "./services/docxDetectDoc";
@@ -468,7 +469,7 @@ export function registerIpc() {
   H("tpl:setPlan", (_e, id: number, plan) =>
     run(() => tpl.setPlan(db(), id, plan)),
   );
-  H("rep:prepare", (_e, id, uids, title, refNo, reportDate) =>
+  H("rep:prepare", (_e, id, uids, title, refNo, reportDate, extraExcel) =>
     runAsync(() =>
       rep.prepare(
         db(),
@@ -477,10 +478,22 @@ export function registerIpc() {
         String(title ?? "").slice(0, 120),
         String(refNo ?? ""),
         String(reportDate ?? ""),
+        extraExcel === true,
       ),
     ),
   );
   H("rep:discard", () => rep.discard());
+  // references of the latest saved reports (for the Entry screen's "Last / Next / Recent")
+  H("rep:recentRefs", (_e, limit?: number) =>
+    rep.recentRefs(
+      db(),
+      Math.min(Math.max(Math.trunc(Number(limit)) || 8, 1), 50),
+    ),
+  );
+  // references on existing transactions, highest number first (for the Entry screen's "Past transaction refs")
+  H("rep:pastRefs", (_e, search?: string) =>
+    listRefs(db(), String(search ?? "").slice(0, 100)),
+  );
   // Word model of a generated (not yet saved) file, for the report preview
   H("rep:preview", (_e, fileId: string) =>
     run<DocModel>(() => {

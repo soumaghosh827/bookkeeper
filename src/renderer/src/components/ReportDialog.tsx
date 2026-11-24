@@ -51,7 +51,7 @@ export default function ReportDialog({
   const [names, setNames] = useState<Record<string, string>>(() =>
     Object.fromEntries(initial.files.map((f) => [f.id, f.fileName])),
   );
-  const [record, setRecord] = useState(true);
+  const record = true; // every report is saved to the database (no opt-out)
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false); // re-preparing after a title change
   const [broken, setBroken] = useState(false); // the last re-prepare failed: nothing valid is prepared
@@ -68,15 +68,17 @@ export default function ReportDialog({
     model: DocModel;
   } | null>(null);
   const [docErr, setDocErr] = useState("");
-  const lastTitle = useRef("");
+  const [extra, setExtra] = useState(false); // also make a separate Excel table
+  const lastKey = useRef("|0"); // the title and Excel choice the current preparation was built with
 
   const active: ReportFile =
     prepared.files.find((f) => f.id === tab) ?? prepared.files[0];
 
-  // title changed: prepare again (debounced) so the preview and the saved file include it
+  // title or "also Excel" changed: prepare again (debounced) so the preview and the saved files match
   useEffect(() => {
-    if (title === lastTitle.current) return;
-    lastTitle.current = title;
+    const key = `${title}|${extra ? 1 : 0}`;
+    if (key === lastKey.current) return;
+    lastKey.current = key;
     let stale = false;
     setRefreshing(true);
     const t = setTimeout(async () => {
@@ -86,6 +88,7 @@ export default function ReportDialog({
         title,
         refNo,
         reportDate,
+        extra,
       );
       if (stale) return;
       setRefreshing(false);
@@ -102,7 +105,7 @@ export default function ReportDialog({
       stale = true;
       clearTimeout(t);
     };
-  }, [title]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [title, extra]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Word tab: the model of the generated file
   useEffect(() => {
@@ -262,6 +265,17 @@ export default function ReportDialog({
                 Nothing is written until you save or print. The preview shows
                 the finished report.
               </p>
+              {prepared.canAddExcel && (
+                <label className="check" style={{ marginTop: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={extra}
+                    disabled={locked || busy || refreshing || printing}
+                    onChange={(e) => setExtra(e.target.checked)}
+                  />{" "}
+                  Also save the table as a separate Excel file
+                </label>
+              )}
               <div className="field" style={{ marginTop: 12 }}>
                 <label>Table title (optional, centred above the table)</label>
                 <input
@@ -297,7 +311,7 @@ export default function ReportDialog({
                   ))}
                 </div>
               )}
-              <label className="check">
+              {/* <label className="check">
                 <input
                   type="checkbox"
                   checked={record}
@@ -306,7 +320,7 @@ export default function ReportDialog({
                 />{" "}
                 Save report to database (so we know these transactions have a
                 report)
-              </label>
+              </label> */}
               {note && <p className="notice ok">{note}</p>}
               {err && <p className="error">{err}</p>}
             </div>

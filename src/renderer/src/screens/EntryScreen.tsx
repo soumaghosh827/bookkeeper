@@ -4,6 +4,7 @@ import type {
   CustomColumn,
   Labels,
   PreviewRow,
+  RecentRef,
   ReportPrepared,
   SearchKey,
   Template,
@@ -14,12 +15,14 @@ import {
   fmtDate,
   formatPaise,
   parseAmount,
+  nextRef,
   parseDate,
   todayIso,
 } from "@shared/format";
 import SuggestPanel from "@/components/SuggestPanel";
 import Modal from "@/components/Modal";
 import ReportDialog from "@/components/ReportDialog";
+import PastRefsDialog from "@/components/PastRefsDialog";
 import AskDialog from "@/components/AskDialog";
 import NameDialog from "@/components/NameDialog";
 import Icon from "@/components/Icon";
@@ -46,6 +49,11 @@ type Sug = {
   text: string;
   rect: DOMRect;
 };
+const PAYEE_COLLATOR = new Intl.Collator(undefined, {
+  numeric: true, // 105 sorts after 99
+  sensitivity: "base", // ignore case
+});
+type Sort = { key: "payee" | "amount"; dir: "asc" | "desc" } | null;
 type Report = {
   prepared: ReportPrepared;
   already: number;
@@ -88,6 +96,11 @@ export default function EntryScreen({
   const [fieldDlg, setFieldDlg] = useState(false);
   const [refNo, setRefNo] = useState(""); // belongs to the report, not to a transaction
   const [repDate, setRepDate] = useState(fmtDate(todayIso()));
+  const [recent, setRecent] = useState<RecentRef[]>([]); // references of the latest saved reports, newest first
+  const [recentOpen, setRecentOpen] = useState(false);
+  const [pastOpen, setPastOpen] = useState(false); // "Past refs" dialog
+  const [sort, setSort] = useState<Sort>(null); // view-only sort of the right panel; null = entry order
+  const refBox = useRef<HTMLDivElement>(null);
 
   const tplGroups = useMemo(() => {
     const m = new Map<string, Template[]>();
@@ -96,6 +109,36 @@ export default function EntryScreen({
   }, [tpls]);
   const tplSel = tpls.find((t) => t.id === tplId);
 
+  const loadRecent = useCallback(async () => {
+    setRecent(await window.api.reports.recentRefs(8));
+  }, []);
+  useEffect(() => {
+    loadRecent();
+  }, [loadRecent, active, refreshKey]);
+  const lastRef = recent[0]?.ref_no ?? "";
+  const nextOne = lastRef ? nextRef(lastRef) : null;
+  useEffect(() => {
+    if (!recentOpen) return;
+    const away = (e: MouseEvent) => {
+      if (!refBox.current?.contains(e.target as Node)) setRecentOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setRecentOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [recentOpen]);
+  const fillRef = (v: string) => {
+    setRefNo(v);
+    setRecentOpen(false);
+    setPastOpen(false);
+    document.getElementById("rep-ref")?.focus();
+  };
+
   const refs = useRef<Record<string, HTMLInputElement | null>>({});
   const seq = useRef(0);
   const saving = useRef(false);
@@ -103,6 +146,45 @@ export default function EntryScreen({
   const { withConfirm, element } = useConfirmFlow();
   const locked = !!accountId;
   const total = rows.reduce((n, r) => n + r.amount_paise, 0);
+  const sortedRows = useMemo(() => {
+    if (!sort) return rows;
+    const d = sort.dir === "asc" ? 1 : -1;
+    // Array.sort is stable, so rows that tie keep their entry order
+    return [...rows].sort(
+      (a, b) =>
+        d *
+        (sort.key === "amount"
+          ? a.amount_paise - b.amount_paise
+          : PAYEE_COLLATOR.compare(a.payee, b.payee)),
+    );
+  }, [rows, sort]);
+  // click cycle: ascending -> descending -> off
+  const toggleSort = (key: "payee" | "amount") =>
+    setSort((s) =>
+      !s || s.key !== key
+        ? { key, dir: "asc" }
+        : s.dir === "asc"
+          ? { key, dir: "desc" }
+          : null,
+    );
+  const sortBtn = (key: "payee" | "amount", text: string) => {
+    const dir = sort?.key === key ? sort.dir : null;
+    return (
+      <button
+        type="button"
+        className={`pvsort${dir ? " on" : ""}`}
+        title={`Sort by ${text}`}
+        onClick={() => toggleSort(key)}
+      >
+        <span>{text}</span>
+        {dir && (
+          <span className="ind">
+            <Icon name={dir === "asc" ? "up" : "down"} />
+          </span>
+        )}
+      </button>
+    );
+  };
 
   const reloadRows = useCallback(async () => {
     const r = await window.api.preview.list();
@@ -380,7 +462,7 @@ export default function EntryScreen({
       return show("Enter the report date as dd/mm/yyyy", { tone: "error" });
     const r = await window.api.reports.prepare(
       tplId,
-      rows.map((x) => x.uid),
+      sortedRows.map((x) => x.uid),
       "",
       refNo.trim(),
       iso,
@@ -392,7 +474,7 @@ export default function EntryScreen({
       prepared: r.data!,
       warnings,
       already: rows.filter((x) => x.report_count > 0).length,
-      uids: rows.map((x) => x.uid),
+      uids: sortedRows.map((x) => x.uid),
       refNo: refNo.trim(),
       reportDate: iso,
     });
@@ -542,13 +624,34 @@ export default function EntryScreen({
                 <thead>
                   <tr>
                     <th>S.No</th>
-                    <th>{labels.payee}</th>
-                    <th className="r">{labels.amount_paise}</th>
+                    <th
+                      aria-sort={
+                        sort?.key === "payee"
+                          ? sort.dir === "asc"
+                            ? "ascending"
+                            : "descending"
+                          : undefined
+                      }
+                    >
+                      {sortBtn("payee", labels.payee)}
+                    </th>
+                    <th
+                      className="r"
+                      aria-sort={
+                        sort?.key === "amount"
+                          ? sort.dir === "asc"
+                            ? "ascending"
+                            : "descending"
+                          : undefined
+                      }
+                    >
+                      {sortBtn("amount", labels.amount_paise)}
+                    </th>
                     <th />
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => (
+                  {sortedRows.map((r, i) => (
                     <tr
                       key={r.uid}
                       className={r.uid === newUid ? "newrow" : ""}
@@ -598,8 +701,120 @@ export default function EntryScreen({
                 marginBottom: "var(--sp-2)",
               }}
             >
-              <div className="field">
-                <label htmlFor="rep-ref">Reference no</label>
+              <div
+                className="field"
+                ref={refBox}
+                style={{ position: "relative" }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    justifyContent: "space-between",
+                    gap: "var(--sp-2)",
+                  }}
+                >
+                  <label htmlFor="rep-ref">Reference no</label>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "var(--sp-2)",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="linkbtn"
+                      title="References already used on transactions"
+                      onClick={() => {
+                        setRecentOpen(false);
+                        setPastOpen(true);
+                      }}
+                    >
+                      <Icon name="history" className="ic-inline" /> Past refs
+                    </button>
+                    <span className="muted" aria-hidden="true">
+                      ·
+                    </span>
+                    <button
+                      type="button"
+                      className="linkbtn"
+                      disabled={!recent.length}
+                      aria-expanded={recentOpen}
+                      title={
+                        recent.length
+                          ? "Recently used references"
+                          : "Appears after your first saved report with a reference"
+                      }
+                      onClick={() => setRecentOpen((o) => !o)}
+                    >
+                      Recent <Icon name="down" className="ic-inline" />
+                    </button>
+                  </span>
+                </div>
+                {pastOpen && (
+                  <PastRefsDialog
+                    onPick={fillRef}
+                    onClose={() => setPastOpen(false)}
+                  />
+                )}
+                {recentOpen && recent.length > 0 && (
+                  <div
+                    aria-label="Recent references"
+                    style={{
+                      position: "absolute",
+                      right: 0,
+                      bottom: "calc(100% + 3px)",
+                      minWidth: 260,
+                      maxWidth: 360,
+                      zIndex: 40,
+                      background: "var(--surface)",
+                      border: "1px solid var(--border-strong)",
+                      borderRadius: "var(--radius)",
+                      boxShadow: "var(--shadow-pop)",
+                      padding: 4,
+                    }}
+                  >
+                    <div
+                      className="muted"
+                      style={{ padding: "4px 8px", fontSize: "var(--fs-sm)" }}
+                    >
+                      Recently used
+                    </div>
+                    {recent.map((r) => (
+                      <button
+                        key={r.ref_no}
+                        type="button"
+                        className="ghost"
+                        style={{
+                          display: "flex",
+                          width: "100%",
+                          justifyContent: "space-between",
+                          gap: 12,
+                          textAlign: "left",
+                        }}
+                        onClick={() => fillRef(r.ref_no)}
+                      >
+                        <span
+                          style={{
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {r.ref_no}
+                        </span>
+                        <span
+                          className="muted"
+                          style={{ flex: "none", fontSize: "var(--fs-sm)" }}
+                        >
+                          {fmtDate(r.report_date)} · {r.item_count} txn
+                          {r.item_count === 1 ? "" : "s"}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <input
                   id="rep-ref"
                   value={refNo}
@@ -607,6 +822,59 @@ export default function EntryScreen({
                   placeholder="e.g. REF-101"
                   onChange={(e) => setRefNo(e.target.value)}
                 />
+                {lastRef && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "var(--sp-2)",
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      marginTop: "var(--sp-1)",
+                      fontSize: "var(--fs-sm)",
+                    }}
+                  >
+                    <span className="muted">Last:</span>
+                    <button
+                      type="button"
+                      className="linkbtn mono"
+                      title="Use the last reference"
+                      style={{
+                        display: "block",
+                        maxWidth: "100%",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      onClick={() => fillRef(lastRef)}
+                    >
+                      {lastRef}
+                    </button>
+                    {nextOne && (
+                      <>
+                        <span className="muted" aria-hidden="true">
+                          ·
+                        </span>
+                        <span className="muted">Next:</span>
+                        <button
+                          type="button"
+                          className="linkbtn mono"
+                          title="Use the next reference"
+                          style={{
+                            display: "block",
+                            maxWidth: "100%",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            fontWeight: "var(--fw-bold)",
+                          }}
+                          onClick={() => fillRef(nextOne)}
+                        >
+                          {nextOne}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="field">
                 <label htmlFor="rep-date">Date</label>
@@ -758,7 +1026,10 @@ export default function EntryScreen({
           initial={report.prepared}
           warnings={report.warnings}
           already={report.already}
-          onSaved={onTxChanged}
+          onSaved={() => {
+            onTxChanged();
+            loadRecent();
+          }}
           onClose={closeReport}
           onClearList={async () => {
             await window.api.preview.clear();

@@ -95,10 +95,12 @@ const api: BookkeeperApi = {
     setPlan: (id, plan) => inv("tpl:setPlan", id, plan),
   },
   reports: {
-    prepare: (id, uids, title, refNo, reportDate) =>
-      inv("rep:prepare", id, uids, title, refNo, reportDate),
+    prepare: (id, uids, title, refNo, reportDate, extraExcel) =>
+      inv("rep:prepare", id, uids, title, refNo, reportDate, extraExcel),
     save: (r, names) => inv("rep:save", r, names),
     discard: () => inv("rep:discard"),
+    recentRefs: (limit) => inv("rep:recentRefs", limit),
+    pastRefs: (search) => inv("rep:pastRefs", search),
     preview: (fileId) => inv("rep:preview", fileId),
     print: (fileId, record, page) => inv("rep:print", fileId, record, page),
   },

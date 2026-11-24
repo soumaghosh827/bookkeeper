@@ -190,6 +190,29 @@ button.icon {
   width: var(--control-h);
   padding: 0;
 }
+/* Text link that behaves like a button: no box, brand colour, underline on hover. Tokens only, so light and dark both work. */
+button.linkbtn {
+  height: auto;
+  padding: 2px 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--brand);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+button.linkbtn:hover:not(:disabled) {
+  background: transparent;
+  color: var(--brand-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+button.linkbtn.mono {
+  font-family: var(--font-mono);
+}
 .ic {
   width: var(--icon-size);
   height: var(--icon-size);

@@ -179,6 +179,34 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+/* Sortable header in the Entry right panel: same look as the grid headers (.dg-th) */
+.pv th button.pvsort {
+  height: auto;
+  padding: 2px var(--sp-1);
+  margin: 0 calc(var(--sp-1) * -1);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.pv th button.pvsort:hover:not(:disabled) {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+.pv th button.pvsort.on {
+  color: var(--text);
+}
+.pv th button.pvsort .ind {
+  display: inline-flex;
+  color: var(--brand);
+}
+.pv th button.pvsort .ind .ic {
+  width: 12px;
+  height: 12px;
+}
 .pv td:last-child,
 .pv th:last-child {
   width: 44px;

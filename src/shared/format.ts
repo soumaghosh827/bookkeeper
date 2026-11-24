@@ -124,3 +124,68 @@ export function rupeesInWords(paise: number): string {
 const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 export const isValidIfsc = (s: string) => IFSC_RE.test(s);
 export const cleanIfsc = (s: string) => s.replace(/\s/g, "").toUpperCase();
+
+/** When the year part of a reference moves to a new year, should the number start again from 1? Set true if your series restarts every year. */
+const RESET_SEQ_ON_NEW_YEAR = true;
+
+/** How many past years (or financial years) still count as "a year" inside a reference. Anything older is treated as an ordinary number. */
+const YEAR_WINDOW = 5;
+
+/**
+ * Suggests the reference that follows `ref`.
+ *  - The last number outside any year goes up by one and keeps its zero padding ("BK/0105" -> "BK/0106").
+ *  - A financial-year range (25-26, 2025-26, 2025-2026; April to March) moves to the current cycle, same format.
+ *  - A plain year (2025) moves to the current calendar year.
+ *  - Numbers count as a year only when they fall within the last YEAR_WINDOW years up to now; a pair must also be consecutive.
+ *    So 11/12, 12-13 or a future 27-28 stay ordinary numbers.
+ * null when there is no number to continue from.
+ */
+export function nextRef(ref: string, today: Date = new Date()): string | null {
+  const s = ref.trim();
+  const MARK = "\u0001";
+  const cal = today.getFullYear();
+  const fy = today.getMonth() >= 3 ? cal : cal - 1;
+  const two = (n: number) => String(n % 100).padStart(2, "0");
+
+  const bump = (masked: string, nowYear: string | null, changed: boolean) => {
+    const q = masked.match(/^(.*?)(\d+)([^A-Za-z0-9]*)$/);
+    if (!q) return null;
+    const width = q[2].length;
+    const n =
+      RESET_SEQ_ON_NEW_YEAR && changed
+        ? "1".padStart(width, "0")
+        : (BigInt(q[2]) + BigInt(1)).toString().padStart(width, "0"); // BigInt: long numbers never lose digits
+    const out = q[1] + n + q[3];
+    return nowYear ? out.replace(MARK, nowYear) : out;
+  };
+
+  // 1) financial-year range: the first one that is consecutive and inside the window
+  const re1 = /(?<!\d)(\d{4}|\d{2})(\s*[-–/]\s*)(\d{4}|\d{2})(?!\d)/g;
+  for (let m = re1.exec(s); m; m = re1.exec(s)) {
+    const a = m[1].length === 4 ? +m[1] : 2000 + +m[1];
+    let b = m[3].length === 4 ? +m[3] : Math.floor(a / 100) * 100 + +m[3];
+    if (b < a) b += 100;
+    if (b !== a + 1 || a > fy || a < fy - YEAR_WINDOW) continue;
+    const now =
+      (m[1].length === 4 ? String(fy) : two(fy)) +
+      m[2] +
+      (m[3].length === 4 ? String(fy + 1) : two(fy + 1));
+    const masked = s.slice(0, m.index) + MARK + s.slice(m.index + m[0].length);
+    return bump(masked, now, m[0] !== now);
+  }
+
+  // 2) a plain year (the last one in the text) inside the window
+  const re2 = /(?<!\d)\d{4}(?!\d)/g;
+  let last: RegExpExecArray | null = null;
+  for (let x = re2.exec(s); x; x = re2.exec(s))
+    if (+x[0] <= cal && +x[0] >= cal - YEAR_WINDOW) last = x;
+  if (last) {
+    const now = String(cal);
+    const masked = s.slice(0, last.index) + MARK + s.slice(last.index + 4);
+    const r = bump(masked, now, last[0] !== now);
+    if (r) return r; // else the year is the only number: treat it as a plain number below
+  }
+
+  // 3) no year: just the number
+  return bump(s, null, false);
+}

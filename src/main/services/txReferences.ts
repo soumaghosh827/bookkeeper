@@ -122,3 +122,32 @@ export function setReferences(
     ).run(ref, txUid, key, ref);
   }
 }
+
+/**
+ * Distinct references on existing transactions (one entry per reference, ignoring case and spaces),
+ * highest number first. `search` narrows the list (ignoring case and spaces).
+ */
+export function listRefs(
+  db: DB,
+  search = "",
+  limit = 300,
+): { ref_no: string; tx_count: number }[] {
+  const key = refKey(search).replace(/[\\%_]/g, (c) => "\\" + c);
+  const rows = db
+    .prepare(
+      `SELECT x.ref_no AS ref_no, COUNT(DISTINCT x.transaction_id) AS tx_count
+         FROM transaction_references x JOIN transactions t ON t.uid = x.transaction_id
+        WHERE t.deleted_at IS NULL ${key ? "AND x.ref_key LIKE ? ESCAPE '\\'" : ""}
+        GROUP BY x.ref_key`,
+    )
+    .all(...(key ? [`%${key}%`] : [])) as {
+    ref_no: string;
+    tx_count: number;
+  }[];
+  const collator = new Intl.Collator(undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+  rows.sort((a, b) => collator.compare(b.ref_no, a.ref_no)); // numbers inside the text compare as numbers: 105 above 99
+  return rows.slice(0, Math.min(Math.max(Math.trunc(limit) || 300, 1), 1000));
+}

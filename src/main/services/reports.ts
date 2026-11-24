@@ -22,7 +22,7 @@ import {
   tableHeader,
   todayIso,
 } from "@shared/format";
-import { addReference, cleanRef } from "./txReferences";
+import { addReference, cleanRef, refKey } from "./txReferences";
 import { getRowsByUids } from "./transactions";
 import { explain, getTemplateFile, getTexts } from "./templates";
 import { buildTableXlsx } from "./tableExcel";
@@ -393,6 +393,7 @@ export async function prepare(
   title = "",
   refNo = "",
   reportDate = "",
+  extraExcel = false,
 ): Promise<Result<ReportPrepared>> {
   pending = null;
   if (!uids.length) return { ok: false, error: "The list is empty" };
@@ -406,6 +407,20 @@ export async function prepare(
   const tpl = getTemplateFile(db, templateId);
   if (!tpl) return { ok: false, error: "Template not found" };
   const plan = planOf(db, templateId);
+  const hasExcel = plan.outputs.some((o) => o.kind === "xlsx");
+  // "Also save an Excel table": a separate Excel output for this report only; the template itself is not changed
+  const outputs: OutputSpec[] =
+    extraExcel && !hasExcel
+      ? [
+          ...plan.outputs,
+          {
+            id: "extra_xlsx",
+            kind: "xlsx",
+            name: "{template} {date} - Table",
+            table: "inline",
+          },
+        ]
+      : plan.outputs;
   if (plan.outputs.some((o) => o.kind === "docx") && !tpl.file)
     return {
       ok: false,
@@ -432,7 +447,7 @@ export async function prepare(
   try {
     const files: PendingFile[] = [];
     const used = new Set<string>();
-    for (const o of plan.outputs) {
+    for (const o of outputs) {
       const fileName = outputFileName(o, tpl.name, used, repDate);
       let buffer: Buffer;
       if (o.kind === "xlsx") buffer = await buildTableXlsx(model);
@@ -465,6 +480,7 @@ export async function prepare(
         templateName: tpl.name,
         count: rows.length,
         total_paise: total,
+        canAddExcel: !hasExcel,
       },
     };
   } catch (e) {
@@ -516,4 +532,26 @@ export function record(db: DB, fileName: string) {
     }
   })();
   p.recorded = true;
+}
+
+/** References used in the latest saved reports, newest first, one entry per reference (ignoring case and spaces). */
+export function recentRefs(
+  db: DB,
+  limit = 8,
+): { ref_no: string; report_date: string; item_count: number }[] {
+  const rows = db
+    .prepare(
+      "SELECT ref_no, report_date, item_count FROM reports WHERE ref_no <> '' ORDER BY id DESC LIMIT 300",
+    )
+    .all() as { ref_no: string; report_date: string; item_count: number }[];
+  const seen = new Set<string>();
+  const out: typeof rows = [];
+  for (const r of rows) {
+    const k = refKey(r.ref_no);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(r);
+    if (out.length >= limit) break;
+  }
+  return out;
 }

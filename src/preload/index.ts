@@ -83,6 +83,7 @@ const api: BookkeeperApi = {
     setFile: (id, data) => inv("tpl:setFile", id, data),
     remove: (id) => inv("tpl:remove", id),
     lint: (id) => inv("tpl:lint", id),
+    usesCheque: (id) => inv("tpl:usesCheque", id),
     inspect: (src) => inv("tpl:inspect", src),
     pickSource: () => inv("tpl:pickSource"),
     analyze: (src) => inv("tpl:analyze", src),
@@ -95,11 +96,22 @@ const api: BookkeeperApi = {
     setPlan: (id, plan) => inv("tpl:setPlan", id, plan),
   },
   reports: {
-    prepare: (id, uids, title, refNo, reportDate, extraExcel) =>
-      inv("rep:prepare", id, uids, title, refNo, reportDate, extraExcel),
+    prepare: (id, uids, title, refNo, reportDate, extraExcel, chequeNo) =>
+      inv(
+        "rep:prepare",
+        id,
+        uids,
+        title,
+        refNo,
+        reportDate,
+        extraExcel,
+        chequeNo,
+      ),
     save: (r, names) => inv("rep:save", r, names),
     discard: () => inv("rep:discard"),
     recentRefs: (limit) => inv("rep:recentRefs", limit),
+    chequeUsed: (chequeNo) => inv("rep:chequeUsed", chequeNo),
+    lastCheque: () => inv("rep:lastCheque"),
     pastRefs: (search) => inv("rep:pastRefs", search),
     list: (q) => inv("rep:list", q),
     items: (id) => inv("rep:items", id),

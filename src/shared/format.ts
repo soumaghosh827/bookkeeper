@@ -189,3 +189,25 @@ export function nextRef(ref: string, today: Date = new Date()): string | null {
   // 3) no year: just the number
   return bump(s, null, false);
 }
+
+/** "123456, 123457" -> ["123456", "123457"]. Commas, semicolons and spaces separate numbers. */
+export const chequeTokens = (s: string): string[] =>
+  String(s ?? "")
+    .split(/[,;\s]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+/** The cheque number that follows `chequeNo`: the last number in the last token goes up by one, zero padding kept.
+ *  "000999" -> "001000", "123456, 123457" -> "123458", "CHQ-0042" -> "CHQ-0043". null when there is no digit to continue from. */
+export function nextChequeNo(chequeNo: string): string | null {
+  const last = chequeTokens(chequeNo).at(-1);
+  if (!last) return null;
+  const q = last.match(/^(.*?)(\d+)(\D*)$/);
+  if (!q) return null;
+  const n = (BigInt(q[2]) + BigInt(1)).toString().padStart(q[2].length, "0"); // BigInt: long numbers never lose digits
+  return q[1] + n + q[3];
+}
+
+/** For the "is not 6 digits" warning. True when empty (nothing to warn about) or when every number is exactly 6 digits. */
+export const chequeIsSixDigit = (s: string): boolean =>
+  chequeTokens(s).every((t) => /^\d{6}$/.test(t));

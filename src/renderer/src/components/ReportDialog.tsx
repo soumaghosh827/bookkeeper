@@ -27,6 +27,7 @@ export default function ReportDialog({
   templateId,
   uids,
   refNo,
+  chequeNo,
   reportDate,
   initial,
   warnings,
@@ -38,6 +39,7 @@ export default function ReportDialog({
   templateId: number;
   uids: string[];
   refNo: string;
+  chequeNo: string; // sent again on every re-prepare, or the saved report would lose it
   reportDate: string; // ISO
   initial: ReportPrepared; // from the first prepare
   warnings: string[];
@@ -89,6 +91,7 @@ export default function ReportDialog({
         refNo,
         reportDate,
         extra,
+        chequeNo,
       );
       if (stale) return;
       setRefreshing(false);

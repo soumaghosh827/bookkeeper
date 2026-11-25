@@ -65,6 +65,19 @@ export const WORDS = {
     empty: "No output",
   },
 
+  // Entry screen: dropdown group headers and the "Makes:" hint (same for both flows)
+  entry: {
+    letterTable: "Letter with table",
+    letterNewPage: "Letter + table on a new page",
+    letterExcel: "Letter + Excel table",
+    letterOnly: "Letter only",
+    excelOnly: "Excel table only",
+    none: "No output",
+    makes: "Makes:",
+    word: "Word letter",
+    excel: "Excel file",
+  },
+
   // Note in the Word preview dialog
   preview: {
     inline:
@@ -83,8 +96,8 @@ export const WORDS = {
   // "Placeholders you can use in the Word file" help list: [what to type, what it does]
   placeholders: [
     [
-      "{total} {total_words} {count} {today} {ref_no}",
-      "Totals worked out by the app, plus the report’s Date ({today}) and Reference no ({ref_no}) as entered in the list panel. {today} is the report date, which is today unless you change it. The app adds “Rs.” before {total} and “Rupees” before {total_words} itself, so don’t type them",
+      "{total} {total_words} {count} {today} {ref_no} {cheque_no}",
+      "Totals worked out by the app, plus the report’s Date ({today}), Reference no ({ref_no}) and Cheque no ({cheque_no}) as entered in the list panel. {today} is the report date, which is today unless you change it. The app adds “Rs.” before {total} and “Rupees” before {total_words} itself, so don’t type them",
     ],
     [
       "{payee} {bank} {branch} {account_no} {ifsc} {amount} {amount_words} {date} {reference_no} {utr} {notes}",

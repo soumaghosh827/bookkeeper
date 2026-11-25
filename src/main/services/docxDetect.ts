@@ -11,6 +11,7 @@ export type HitKind =
   | "amount"
   | "words"
   | "ref"
+  | "cheque"
   | "ifsc"
   | "account"
   | "payee"
@@ -184,6 +185,11 @@ const LABELLED: LabelDef[] = [
 
 const REF_VALUE = String.raw`[A-Za-z0-9]+(?:[\/\-._][A-Za-z0-9]+|${H}?\/${H}?[A-Za-z0-9]+)*`;
 
+// Cheque numbers: ONLY after a label ("Cheque No.", "Chq. No.", "Ch. No", "vide cheque no."). A bare 6-digit number is never
+// suggested: it clashes with pincodes, amounts and parts of account numbers.
+const CHEQUE_LABEL = String.raw`(?<![A-Za-z])(?:che?que|cheq|chq|ch)\.?${H}*(?:no|number|num|#)\.?(?![A-Za-z])`;
+const CHEQUE_VALUE = String.raw`\d{4,12}(?:${H}*(?:,|&|and)${H}*\d{4,12})*(?![\dA-Za-z])`;
+
 // Where a payee / bank / branch value ends inside a running sentence: before a joining word, punctuation or an amount.
 const SENTENCE_STOP =
   /\s+(?:to|for|from|by|vide|against|towards|through|amounting|being)\s|\s*[,;(]|\s+(?:rs|inr)\b|\s*₹/i;
@@ -214,6 +220,36 @@ function labelled(text: string, boundaries: number[], out: Cand[]) {
           kind: "ref",
           tag: "ref_no",
           options: ["ref_no", "reference_no"],
+          confidence: "likely",
+          reason: `Looks like “${m[1].replace(/[\s:\-–—.]+$/, "").trim()}”`,
+          priority: 1,
+        },
+        text,
+      ),
+    );
+  }
+  // cheque numbers
+  const chequeRe = new RegExp(
+    `(${CHEQUE_LABEL})([\\s:.\\-–—=#]*)(${CHEQUE_VALUE})`,
+    "gi",
+  );
+  for (const m of text.matchAll(chequeRe)) {
+    const labelStart = m.index!;
+    if (
+      /(?:your|ur|their)\s*$/i.test(
+        text.slice(Math.max(0, labelStart - 12), labelStart),
+      )
+    )
+      continue; // someone else's cheque
+    const start = labelStart + m[1].length + m[2].length;
+    out.push(
+      mk(
+        {
+          start,
+          end: start + m[3].length,
+          kind: "cheque",
+          tag: "cheque_no",
+          options: ["cheque_no"],
           confidence: "likely",
           reason: `Looks like “${m[1].replace(/[\s:\-–—.]+$/, "").trim()}”`,
           priority: 1,
@@ -274,6 +310,7 @@ function labelled(text: string, boundaries: number[], out: Cand[]) {
 function labelStarts(text: string): number[] {
   const pats = [
     REF_LABEL,
+    CHEQUE_LABEL,
     DATE_LABEL + String.raw`(?=${H}*[:\-–—])`,
     ...LABELLED.map((d) => d.re),
   ];

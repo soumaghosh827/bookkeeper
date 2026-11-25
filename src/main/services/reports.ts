@@ -24,6 +24,7 @@ import {
   rupeesInWords,
   tableHeader,
   todayIso,
+  chequeTokens,
 } from "@shared/format";
 import { addReference, cleanRef, refKey } from "./txReferences";
 import { getRowsByUids } from "./transactions";
@@ -50,6 +51,7 @@ interface Pending {
   uids: string[];
   total: number;
   refNo: string; // one reference for the whole report ('' = none)
+  chequeNo: string; // optional cheque number of the report ('' = none)
   reportDate: string; // YYYY-MM-DD
   recorded: boolean; // already written to the database; a prepared report is recorded at most once
 }
@@ -287,6 +289,7 @@ export function fillData(
   texts: Record<string, string>,
   refNo: string, // the report's own reference ('' when none was entered)
   repDate: string, // YYYY-MM-DD
+  chequeNo = "", // the report's cheque number ('' when none was entered)
 ): Record<string, unknown> {
   const r0 = rows[0]; // the first transaction feeds the single-bill placeholders
   if (!r0) throw new Error("No transactions to fill the template with");
@@ -310,6 +313,7 @@ export function fillData(
     total_words: rupeesInWords(total),
     today: fmtDate(repDate),
     ref_no: refNo,
+    cheque_no: chequeNo,
   };
 }
 
@@ -385,9 +389,16 @@ export function renderSample(
   const rows = sampleRows();
   const model = buildTableModel(rows, normalizePlan(undefined), "");
   const tableXml = docxTableXml(model, placement, tableFontFor(file));
-  const data = fillData(rows, texts, "BK/SAMPLE/1", todayIso());
+  const data = fillData(rows, texts, "BK/SAMPLE/1", todayIso(), "123456");
   return renderDocx(file, { ...data, table: tableXml }, tableXml);
 }
+
+/** Spaces tidied, no line breaks, at most 100 characters. Free text: "123456, 123457" is fine. */
+export const cleanCheque = (s: string) =>
+  String(s ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 100);
 
 export async function prepare(
   db: DB,
@@ -397,6 +408,7 @@ export async function prepare(
   refNo = "",
   reportDate = "",
   extraExcel = false,
+  chequeNo = "",
 ): Promise<Result<ReportPrepared>> {
   pending = null;
   if (!uids.length) return { ok: false, error: "The list is empty" };
@@ -445,7 +457,7 @@ export async function prepare(
     total: model.total,
     title: model.title,
   };
-  const base = fillData(rows, texts, ref, repDate);
+  const base = fillData(rows, texts, ref, repDate, cleanCheque(chequeNo));
 
   try {
     const files: PendingFile[] = [];
@@ -467,6 +479,7 @@ export async function prepare(
       uids: rows.map((r) => r.uid),
       total,
       refNo: ref,
+      chequeNo: cleanCheque(chequeNo),
       reportDate: repDate,
       recorded: false,
     };
@@ -513,7 +526,7 @@ export function record(db: DB, fileName: string) {
     const now = new Date().toISOString();
     const r = db
       .prepare(
-        "INSERT INTO reports (created_at, template_id, template_name, file_name, item_count, total_paise, ref_no, report_date) VALUES (?,?,?,?,?,?,?,?)",
+        "INSERT INTO reports (created_at, template_id, template_name, file_name, item_count, total_paise, ref_no, report_date, cheque_no) VALUES (?,?,?,?,?,?,?,?,?)",
       )
       .run(
         now,
@@ -524,6 +537,7 @@ export function record(db: DB, fileName: string) {
         p.total,
         p.refNo,
         p.reportDate,
+        p.chequeNo,
       );
     const reportId = Number(r.lastInsertRowid);
     const ins = db.prepare(
@@ -581,9 +595,9 @@ export function listReports(
   if (s) {
     const like = `%${s.replace(/[\\%_]/g, "\\$&")}%`;
     where.push(
-      "(ref_no LIKE ? ESCAPE '\\' OR template_name LIKE ? ESCAPE '\\' OR file_name LIKE ? ESCAPE '\\')",
+      "(ref_no LIKE ? ESCAPE '\\' OR cheque_no LIKE ? ESCAPE '\\' OR template_name LIKE ? ESCAPE '\\' OR file_name LIKE ? ESCAPE '\\')",
     );
-    args.push(like, like, like);
+    args.push(like, like, like, like);
   }
   if (q.from && /^\d{4}-\d{2}-\d{2}$/.test(q.from)) {
     where.push(`${REPORT_DAY} >= ?`);
@@ -603,12 +617,51 @@ export function listReports(
   ).n;
   const rows = db
     .prepare(
-      `SELECT id, created_at, template_name, file_name, item_count, total_paise, ref_no,
+      `SELECT id, created_at, template_name, file_name, item_count, total_paise, ref_no, cheque_no,
               ${REPORT_DAY} AS report_date
          FROM reports ${w} ORDER BY id DESC LIMIT ? OFFSET ?`,
     )
     .all(...args, limit, offset) as ReportListRow[];
   return { rows, total };
+}
+
+/** Saved reports that already use any of these cheque numbers (newest first, at most 3). */
+export function chequeUsed(
+  db: DB,
+  chequeNo: string,
+): { cheque: string; ref_no: string; report_date: string }[] {
+  const want = new Set(chequeTokens(chequeNo).map((t) => t.toLowerCase()));
+  if (!want.size) return [];
+  const rows = db
+    .prepare(
+      `SELECT ref_no, cheque_no, ${REPORT_DAY} AS report_date
+         FROM reports WHERE cheque_no <> '' ORDER BY id DESC`,
+    )
+    .all() as { ref_no: string; cheque_no: string; report_date: string }[];
+  const out: { cheque: string; ref_no: string; report_date: string }[] = [];
+  for (const r of rows) {
+    const hit = chequeTokens(r.cheque_no).find((t) =>
+      want.has(t.toLowerCase()),
+    );
+    if (hit)
+      out.push({ cheque: hit, ref_no: r.ref_no, report_date: r.report_date });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+/** The cheque number of the most recent report that has one (null when none). */
+export function lastCheque(
+  db: DB,
+): { cheque_no: string; report_date: string } | null {
+  return (
+    (db
+      .prepare(
+        `SELECT cheque_no, ${REPORT_DAY} AS report_date
+           FROM reports WHERE cheque_no <> '' ORDER BY id DESC LIMIT 1`,
+      )
+      .get() as { cheque_no: string; report_date: string } | undefined) ?? null
+  );
 }
 
 /** Transactions of one saved report. Deleted ones stay in the list, marked. */

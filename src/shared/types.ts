@@ -185,6 +185,9 @@ export interface PreviewRow {
   reference_no: string;
   created_at: string;
   report_count: number;
+  bank: string;
+  branch: string;
+  account_no: string;
 }
 
 export interface GridQuery {
@@ -410,6 +413,8 @@ export interface Template {
   origin: "none" | "prepared" | "mapped"; // how the Word file got there: no file, a ready-made file with {placeholders}, or built from the user's finished letter
   updated_at: string;
   format: string; // short output summary, e.g. "1 page" or "Letter only + Excel"
+  entry_group: string; // Entry screen: dropdown group header
+  entry_makes: string; // Entry screen: hint, e.g. "Makes: Word letter + Excel file"
 }
 export interface TemplateText {
   key: string;
@@ -486,6 +491,7 @@ export const MAP_TAG_LABELS: Record<string, string> = {
   today: "Report date",
   date: "First transaction's date",
   ref_no: "Report reference no",
+  cheque_no: "Report cheque no",
   reference_no: "First transaction's reference no",
   total: "Total amount",
   total_words: "Total amount in words",
@@ -564,6 +570,7 @@ export interface ReportListRow {
   item_count: number;
   total_paise: number;
   ref_no: string;
+  cheque_no: string; // '' when the report has none
   report_date: string; // YYYY-MM-DD
 }
 
@@ -667,6 +674,30 @@ export function describePlan(plan: OutputPlan, mapped = false): string {
   return parts.length ? parts.join(" + ") : WORDS.badge.empty;
 }
 
+/** Entry screen: dropdown group header for a plan. Same wording for prepared and finished-letter templates. */
+export function entryGroup(plan: OutputPlan): string {
+  const E = WORDS.entry;
+  const word = plan.outputs.find((o) => o.kind === "docx");
+  const hasExcel = plan.outputs.some((o) => o.kind === "xlsx");
+  const w = !word
+    ? ""
+    : word.table === "inline"
+      ? E.letterTable
+      : word.table === "new_page"
+        ? E.letterNewPage
+        : E.letterOnly;
+  if (!w) return hasExcel ? E.excelOnly : E.none;
+  if (!hasExcel) return w;
+  return w === E.letterOnly ? E.letterExcel : `${w} + ${E.excel}`;
+}
+
+/** Entry screen: hint beside "Choose template", e.g. "Makes: Word letter + Excel file". */
+export function entryMakes(plan: OutputPlan): string {
+  const E = WORDS.entry;
+  const parts = plan.outputs.map((o) => (o.kind === "xlsx" ? E.excel : E.word));
+  return parts.length ? `${E.makes} ${parts.join(" + ")}` : E.none;
+}
+
 const str = (v: unknown, max: number, fallback: string) =>
   typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fallback;
 
@@ -742,6 +773,7 @@ export const PREF_KEYS = [
   "density",
   "tx_columns",
   "last_template",
+  "use_cheque", // "1" = the cheque number field is switched on (per unit)
 ] as const;
 export type PrefKey = (typeof PREF_KEYS)[number];
 
@@ -871,6 +903,7 @@ export interface BookkeeperApi {
     setFile(id: number, data: Uint8Array): Promise<Result<Template>>;
     remove(id: number): Promise<Result>;
     lint(id: number): Promise<string[]>;
+    usesCheque(id: number): Promise<boolean>; // the stored Word file contains {cheque_no}
     inspect(src: Uint8Array | number): Promise<Result<DocModel>>; // bytes of a picked file, or a template id
     // ---- map the user's own Word file (step 7). `src` = picked bytes, or a template id to use its stored source ----
     pickSource(): Promise<Result<{ name: string; data: Uint8Array }>>;
@@ -902,6 +935,7 @@ export interface BookkeeperApi {
       refNo?: string, // one reference for the whole report
       reportDate?: string, // YYYY-MM-DD or dd/mm/yyyy; empty = today
       extraExcel?: boolean, // also build a separate Excel table, even when the template makes none
+      chequeNo?: string, // optional cheque number of the report (free text)
     ): Promise<Result<ReportPrepared>>;
     save(
       record: boolean,
@@ -918,6 +952,10 @@ export interface BookkeeperApi {
     }): Promise<ReportListPage>; // saved reports, newest first
     items(id: number): Promise<ReportItemRow[]>; // transactions of one saved report
     recentRefs(limit?: number): Promise<RecentRef[]>; // references of the latest saved reports, newest first, no repeats
+    chequeUsed(
+      chequeNo: string,
+    ): Promise<{ cheque: string; ref_no: string; report_date: string }[]>; // other saved reports that already use any of these cheque numbers (max 3)
+    lastCheque(): Promise<{ cheque_no: string; report_date: string } | null>; // cheque number of the latest report that has one
     preview(fileId: string): Promise<Result<DocModel>>; // Word model of a prepared docx output (ReportFile.id)
     print(
       fileId: string,

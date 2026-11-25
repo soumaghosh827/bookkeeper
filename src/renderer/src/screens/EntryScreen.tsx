@@ -16,6 +16,8 @@ import {
   formatPaise,
   parseAmount,
   nextRef,
+  nextChequeNo,
+  chequeIsSixDigit,
   parseDate,
   todayIso,
 } from "@shared/format";
@@ -60,6 +62,7 @@ type Report = {
   warnings: string[]; // template lint (never blocks)
   uids: string[]; // frozen when Generate was pressed
   refNo: string;
+  chequeNo: string; // "" when the cheque switch is off or the box was empty
   reportDate: string; // ISO
 };
 
@@ -70,6 +73,8 @@ export default function EntryScreen({
   onTxChanged,
   onMasterChanged,
   onCount,
+  useCheque,
+  onUseCheque,
 }: {
   labels: Labels;
   active: boolean;
@@ -77,6 +82,8 @@ export default function EntryScreen({
   onTxChanged: () => void;
   onMasterChanged: () => void;
   onCount: (n: number) => void;
+  useCheque: boolean;
+  onUseCheque: (on: boolean) => void;
 }) {
   const [d, setD] = useState(blank());
   const [accountId, setAccountId] = useState<string | null>(null);
@@ -101,16 +108,23 @@ export default function EntryScreen({
   const [pastOpen, setPastOpen] = useState(false); // "Past refs" dialog
   const [sort, setSort] = useState<Sort>(null); // view-only sort of the right panel; null = entry order
   const refBox = useRef<HTMLDivElement>(null);
+  const chqBox = useRef<HTMLDivElement>(null);
+  const [chequeNo, setChequeNo] = useState(""); // belongs to the report, like the reference no
+  const [chqOpen, setChqOpen] = useState(false);
+  const [askChq, setAskChq] = useState(false); // "This template uses a cheque number. Turn it on?"
+  const [lastChq, setLastChq] = useState(""); // cheque no of the latest report that has one
 
   const tplGroups = useMemo(() => {
     const m = new Map<string, Template[]>();
-    for (const t of tpls) m.set(t.format, [...(m.get(t.format) ?? []), t]);
+    for (const t of tpls)
+      m.set(t.entry_group, [...(m.get(t.entry_group) ?? []), t]);
     return [...m.entries()];
   }, [tpls]);
   const tplSel = tpls.find((t) => t.id === tplId);
 
   const loadRecent = useCallback(async () => {
     setRecent(await window.api.reports.recentRefs(8));
+    setLastChq((await window.api.reports.lastCheque())?.cheque_no ?? "");
   }, []);
   useEffect(() => {
     loadRecent();
@@ -132,6 +146,72 @@ export default function EntryScreen({
       document.removeEventListener("keydown", esc);
     };
   }, [recentOpen]);
+  const nextChq = lastChq ? nextChequeNo(lastChq) : null;
+  const [chqUsed, setChqUsed] = useState<
+    { cheque: string; ref_no: string; report_date: string }[]
+  >([]);
+  const [tplUsesChq, setTplUsesChq] = useState(false); // the chosen template has {cheque_no}
+  // already used on another report (waits a moment after typing)
+  useEffect(() => {
+    if (!useCheque || !chequeNo.trim()) {
+      setChqUsed([]);
+      return;
+    }
+    let stale = false;
+    const h = setTimeout(async () => {
+      const r = await window.api.reports.chequeUsed(chequeNo.trim());
+      if (!stale) setChqUsed(r);
+    }, 300);
+    return () => {
+      stale = true;
+      clearTimeout(h);
+    };
+  }, [useCheque, chequeNo, refreshKey]);
+  // does the chosen template need a cheque number?
+  useEffect(() => {
+    if (!useCheque || tplId === "") {
+      setTplUsesChq(false);
+      return;
+    }
+    let stale = false;
+    window.api.templates.usesCheque(tplId).then((v) => {
+      if (!stale) setTplUsesChq(v);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [useCheque, tplId, active]);
+  const chqWarn: string[] = [];
+  if (useCheque) {
+    if (chequeNo.trim() && !chequeIsSixDigit(chequeNo))
+      chqWarn.push("This cheque number is not 6 digits.");
+    for (const u of chqUsed)
+      chqWarn.push(
+        `Cheque ${u.cheque} is already used on report dated ${fmtDate(u.report_date)}${u.ref_no ? ` (${u.ref_no})` : ""}.`,
+      );
+    if (tplUsesChq && !chequeNo.trim())
+      chqWarn.push("This template needs a cheque number, but the box is empty.");
+  }
+  useEffect(() => {
+    if (!chqOpen) return;
+    const away = (e: MouseEvent) => {
+      if (!chqBox.current?.contains(e.target as Node)) setChqOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setChqOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [chqOpen]);
+  const fillChq = (v: string) => {
+    setChequeNo(v);
+    setChqOpen(false);
+    document.getElementById("rep-chq")?.focus();
+  };
   const fillRef = (v: string) => {
     setRefNo(v);
     setRecentOpen(false);
@@ -165,15 +245,30 @@ export default function EntryScreen({
           : PAYEE_COLLATOR.compare(a.payee, b.payee)),
     );
   }, [rows, sort]);
-  // click cycle: ascending -> descending -> off
+  // payees whose first two words match another row: they get a second line (bank, branch, account end)
+  const alike = useMemo(() => {
+    const key = (p: string) =>
+      p.trim().toLowerCase().split(/\s+/).slice(0, 2).join(" ");
+    const n = new Map<string, number>();
+    for (const r of rows) n.set(key(r.payee), (n.get(key(r.payee)) ?? 0) + 1);
+    return new Set([...n].filter(([, c]) => c > 1).map(([k]) => k));
+  }, [rows]);
+  const detailLine = (r: PreviewRow) => {
+    const key = r.payee.trim().toLowerCase().split(/\s+/).slice(0, 2).join(" ");
+    if (!alike.has(key)) return "";
+    const acc = r.account_no.trim();
+    return [r.bank.trim(), r.branch.trim(), acc ? `····${acc.slice(-4)}` : ""]
+      .filter(Boolean)
+      .join(" · ");
+  };
+  // click cycle: first click = natural order (Amount: biggest first, Beneficiary: A to Z),
+  // second click = the other way, third click = off
   const toggleSort = (key: "payee" | "amount") =>
-    setSort((s) =>
-      !s || s.key !== key
-        ? { key, dir: "asc" }
-        : s.dir === "asc"
-          ? { key, dir: "desc" }
-          : null,
-    );
+    setSort((s) => {
+      const first = key === "amount" ? "desc" : "asc";
+      if (!s || s.key !== key) return { key, dir: first };
+      return s.dir === first ? { key, dir: first === "asc" ? "desc" : "asc" } : null;
+    });
   const sortBtn = (key: "payee" | "amount", text: string) => {
     const dir = sort?.key === key ? sort.dir : null;
     return (
@@ -462,17 +557,29 @@ export default function EntryScreen({
   }
 
   // ---------- report ----------
-  async function generate() {
+  async function generate(skipAsk = false) {
     if (!tplId) return show("Choose a template first", { tone: "error" });
     const iso = parseDate(repDate);
     if (!iso)
       return show("Enter the report date as dd/mm/yyyy", { tone: "error" });
+    const chq = useCheque ? chequeNo.trim() : "";
+    // the template needs a cheque number but the switch is off: ask first
+    if (
+      !useCheque &&
+      !skipAsk &&
+      (await window.api.templates.usesCheque(Number(tplId)))
+    ) {
+      setAskChq(true);
+      return;
+    }
     const r = await window.api.reports.prepare(
       tplId,
       sortedRows.map((x) => x.uid),
       "",
       refNo.trim(),
       iso,
+      false,
+      chq,
     );
     if (!r.ok) return show(r.error ?? "Could not generate", { tone: "error" });
     window.api.prefs.set("last_template", String(tplId));
@@ -483,6 +590,7 @@ export default function EntryScreen({
       already: rows.filter((x) => x.report_count > 0).length,
       uids: sortedRows.map((x) => x.uid),
       refNo: refNo.trim(),
+      chequeNo: chq,
       reportDate: iso,
     });
   }
@@ -623,6 +731,13 @@ export default function EntryScreen({
             <button className="small" onClick={() => setPickerOpen(true)}>
               Add existing…
             </button>
+            <button
+              className="small danger"
+              disabled={!rows.length}
+              onClick={() => setAskClear(true)}
+            >
+              Clear list
+            </button>
           </header>
           <div className="pvwrap">
             {rows.length === 0 ? (
@@ -672,6 +787,9 @@ export default function EntryScreen({
                       <td>{i + 1}</td>
                       <td>
                         {r.payee}
+                        {detailLine(r) && (
+                          <div className="pvsub">{detailLine(r)}</div>
+                        )}
                         {r.report_count > 0 && (
                           <span
                             className="tag"
@@ -706,177 +824,175 @@ export default function EntryScreen({
               </span>
               <span className="big">₹{formatPaise(total)}</span>
             </div>
-            <div className="pvform">
-              <div
-                className="field"
-                ref={refBox}
-                style={{ position: "relative" }}
-              >
+            <div className={`pvform${useCheque ? " has-cheque" : ""}`}>
+              <div className="field">
                 <div className="pvlabrow">
                   <label className="pvlab" htmlFor="rep-ref">
                     Reference no
                   </label>
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "var(--sp-2)",
-                    }}
-                  >
-                    <button
-                      type="button"
-                      className="linkbtn"
-                      title="References already used on transactions"
-                      onClick={() => {
-                        setRecentOpen(false);
-                        setPastOpen(true);
-                      }}
-                    >
-                      <Icon name="history" className="ic-inline" /> Past refs
-                    </button>
-                    <span className="muted" aria-hidden="true">
-                      ·
-                    </span>
-                    <button
-                      type="button"
-                      className="linkbtn"
-                      disabled={!recent.length}
-                      aria-expanded={recentOpen}
-                      title={
-                        recent.length
-                          ? "Recently used references"
-                          : "Appears after your first saved report with a reference"
-                      }
-                      onClick={() => setRecentOpen((o) => !o)}
-                    >
-                      Recent <Icon name="down" className="ic-inline" />
-                    </button>
-                  </span>
-                </div>
-                {pastOpen && (
-                  <PastRefsDialog
-                    onPick={fillRef}
-                    onClose={() => setPastOpen(false)}
-                  />
-                )}
-                {recentOpen && recent.length > 0 && (
-                  <div
-                    aria-label="Recent references"
-                    style={{
-                      position: "absolute",
-                      right: 0,
-                      bottom: "calc(100% + 3px)",
-                      minWidth: 260,
-                      maxWidth: 360,
-                      zIndex: 40,
-                      background: "var(--surface)",
-                      border: "1px solid var(--border-strong)",
-                      borderRadius: "var(--radius)",
-                      boxShadow: "var(--shadow-pop)",
-                      padding: 4,
-                    }}
-                  >
-                    <div
-                      className="muted"
-                      style={{ padding: "4px 8px", fontSize: "var(--fs-sm)" }}
-                    >
-                      Recently used
-                    </div>
-                    {recent.map((r) => (
-                      <button
-                        key={r.ref_no}
-                        type="button"
-                        className="ghost"
-                        style={{
-                          display: "flex",
-                          width: "100%",
-                          justifyContent: "space-between",
-                          gap: 12,
-                          textAlign: "left",
-                        }}
-                        onClick={() => fillRef(r.ref_no)}
-                      >
-                        <span
-                          style={{
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {r.ref_no}
-                        </span>
-                        <span
-                          className="muted"
-                          style={{ flex: "none", fontSize: "var(--fs-sm)" }}
-                        >
-                          {fmtDate(r.report_date)} · {r.item_count} txn
-                          {r.item_count === 1 ? "" : "s"}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <input
-                  id="rep-ref"
-                  value={refNo}
-                  maxLength={100}
-                  placeholder="e.g. REF-101"
-                  onChange={(e) => setRefNo(e.target.value)}
-                />
-                {lastRef && (
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "var(--sp-2)",
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                      marginTop: "var(--sp-1)",
-                      fontSize: "var(--fs-sm)",
-                    }}
-                  >
-                    <span className="muted">Last:</span>
-                    <button
-                      type="button"
-                      className="linkbtn mono"
-                      title="Use the last reference"
-                      style={{
-                        display: "block",
-                        maxWidth: "100%",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                      onClick={() => fillRef(lastRef)}
-                    >
-                      {lastRef}
-                    </button>
-                    {nextOne && (
-                      <>
-                        <span className="muted" aria-hidden="true">
-                          ·
-                        </span>
-                        <span className="muted">Next:</span>
+                  {lastRef && (
+                    <span className="pvchips">
+                      <span className="pvlast">
+                        Last:{" "}
                         <button
                           type="button"
                           className="linkbtn mono"
-                          title="Use the next reference"
-                          style={{
-                            display: "block",
-                            maxWidth: "100%",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            fontWeight: "var(--fw-bold)",
-                          }}
+                          title="Use the last reference"
+                          onClick={() => fillRef(lastRef)}
+                        >
+                          {lastRef}
+                        </button>
+                      </span>
+                      {nextOne && (
+                        <span className="pvnext">
+                          Next:{" "}
+                          <button
+                            type="button"
+                            className="linkbtn mono"
+                            title="Use the next reference"
+                            onClick={() => fillRef(nextOne)}
+                          >
+                            {nextOne}
+                          </button>
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+                <div className="pvrefbox" ref={refBox}>
+                  <input
+                    id="rep-ref"
+                    value={refNo}
+                    maxLength={100}
+                    placeholder="e.g. REF-101"
+                    onChange={(e) => setRefNo(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="ghost pvclock"
+                    aria-label="Recent and past references"
+                    aria-expanded={recentOpen}
+                    title="Recent and past references"
+                    onClick={() => setRecentOpen((o) => !o)}
+                  >
+                    <Icon name="history" />
+                  </button>
+                  {recentOpen && (
+                    <div className="pvmenu" aria-label="References">
+                      {nextOne && (
+                        <button
+                          type="button"
+                          className="ghost"
                           onClick={() => fillRef(nextOne)}
                         >
-                          {nextOne}
+                          <span>Suggested next</span>
+                          <span className="mono">{nextOne}</span>
                         </button>
-                      </>
+                      )}
+                      {lastRef && (
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => fillRef(lastRef)}
+                        >
+                          <span>Last</span>
+                          <span className="mono">{lastRef}</span>
+                        </button>
+                      )}
+                      {recent.length > 1 && (
+                        <>
+                          <div className="pvmenuhead muted">Recently used</div>
+                          {recent.slice(1).map((r) => (
+                            <button
+                              key={r.ref_no}
+                              type="button"
+                              className="ghost"
+                              onClick={() => fillRef(r.ref_no)}
+                            >
+                              <span className="mono">{r.ref_no}</span>
+                              <span className="muted">
+                                {fmtDate(r.report_date)} · {r.item_count} txn
+                                {r.item_count === 1 ? "" : "s"}
+                              </span>
+                            </button>
+                          ))}
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        className="ghost pvmenuall"
+                        onClick={() => {
+                          setRecentOpen(false);
+                          setPastOpen(true);
+                        }}
+                      >
+                        All past references…
+                      </button>
+                    </div>
+                  )}
+                  {pastOpen && (
+                    <PastRefsDialog
+                      onPick={fillRef}
+                      onClose={() => setPastOpen(false)}
+                    />
+                  )}
+                </div>
+              </div>
+              {useCheque && (
+                <div className="field">
+                  <div className="pvlabrow">
+                    <label className="pvlab" htmlFor="rep-chq">
+                      Cheque no
+                    </label>
+                  </div>
+                  <div className="pvrefbox" ref={chqBox}>
+                    <input
+                      id="rep-chq"
+                      value={chequeNo}
+                      maxLength={100}
+                      placeholder="Optional"
+                      onChange={(e) => setChequeNo(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="ghost pvclock"
+                      aria-label="Last cheque numbers"
+                      aria-expanded={chqOpen}
+                      disabled={!lastChq}
+                      title={
+                        lastChq
+                          ? "Last cheque number"
+                          : "Appears after your first saved report with a cheque number"
+                      }
+                      onClick={() => setChqOpen((o) => !o)}
+                    >
+                      <Icon name="history" />
+                    </button>
+                    {chqOpen && (
+                      <div className="pvmenu" aria-label="Cheque numbers">
+                        {nextChq && (
+                          <button
+                            type="button"
+                            className="ghost"
+                            onClick={() => fillChq(nextChq)}
+                          >
+                            <span>Suggested next</span>
+                            <span className="mono">{nextChq}</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => fillChq(lastChq)}
+                        >
+                          <span>Last</span>
+                          <span className="mono">{lastChq}</span>
+                        </button>
+                      </div>
                     )}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
               <div className="field">
                 <div className="pvlabrow">
                   <label className="pvlab" htmlFor="rep-date">
@@ -891,10 +1007,22 @@ export default function EntryScreen({
                 />
               </div>
             </div>
+            {chqWarn.length > 0 && (
+              <div className="pvwarn" role="status">
+                {chqWarn.join(" ")}
+              </div>
+            )}
             <div className="pvtpl">
-              <label className="pvlab" htmlFor="rep-tpl">
-                Choose template
-              </label>
+              <div className="pvtplhead">
+                <label className="pvlab" htmlFor="rep-tpl">
+                  Choose template
+                </label>
+                {tplSel && (
+                  <span className="pvout" title={tplSel.name}>
+                    {tplSel.entry_makes}
+                  </span>
+                )}
+              </div>
               <select
                 id="rep-tpl"
                 value={tplId}
@@ -914,26 +1042,14 @@ export default function EntryScreen({
                   </optgroup>
                 ))}
               </select>
-              {tplSel && (
-                <div className="pvout" title={tplSel.name}>
-                  Output: {tplSel.format}
-                </div>
-              )}
             </div>
             <div className="pvactions">
               <button
                 className="primary"
                 disabled={!rows.length}
-                onClick={generate}
+                onClick={() => generate()}
               >
                 Generate report
-              </button>
-              <button
-                className="danger"
-                disabled={!rows.length}
-                onClick={() => setAskClear(true)}
-              >
-                Clear list
               </button>
             </div>
           </footer>
@@ -976,6 +1092,41 @@ export default function EntryScreen({
           </div>
         </Modal>
       )}
+      {askChq && (
+        <Modal
+          title="Turn on cheque number?"
+          onClose={() => setAskChq(false)}
+          actions={
+            <>
+              <button onClick={() => setAskChq(false)}>Cancel</button>
+              <button
+                onClick={() => {
+                  setAskChq(false);
+                  generate(true);
+                }}
+              >
+                Generate without it
+              </button>
+              <button
+                autoFocus
+                className="primary"
+                onClick={() => {
+                  setAskChq(false);
+                  onUseCheque(true);
+                }}
+              >
+                Turn on
+              </button>
+            </>
+          }
+        >
+          <p>This template uses a cheque number. Turn it on?</p>
+          <p className="muted">
+            After you turn it on, type the cheque number in the Cheque no box
+            and press Generate report again.
+          </p>
+        </Modal>
+      )}
       {askClear && (
         <AskDialog
           title="Clear the list?"
@@ -988,6 +1139,7 @@ export default function EntryScreen({
               await reloadRows();
               onTxChanged();
               setRefNo("");
+              setChequeNo("");
               setRepDate(fmtDate(todayIso()));
             }
           }}
@@ -1028,6 +1180,7 @@ export default function EntryScreen({
           templateId={Number(tplId)}
           uids={report.uids}
           refNo={report.refNo}
+          chequeNo={report.chequeNo}
           reportDate={report.reportDate}
           initial={report.prepared}
           warnings={report.warnings}
@@ -1035,6 +1188,7 @@ export default function EntryScreen({
           onSaved={() => {
             onTxChanged();
             loadRecent();
+            setChequeNo("");
           }}
           onClose={closeReport}
           onClearList={async () => {
@@ -1042,6 +1196,7 @@ export default function EntryScreen({
             await reloadRows();
             onTxChanged();
             setRefNo("");
+            setChequeNo("");
             setRepDate(fmtDate(todayIso()));
             closeReport();
           }}

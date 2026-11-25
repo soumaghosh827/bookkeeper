@@ -343,15 +343,26 @@
 }
 /* template row: label on the left, dropdown on the right */
 .pvtpl {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
-  column-gap: var(--sp-3);
-  row-gap: var(--sp-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
   margin-bottom: var(--sp-3);
 }
+.pvtpl select {
+  width: 100%;
+}
+/* label on the left, "Makes: ..." hint on the right */
+.pvtplhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+.pvtplhead .pvlab {
+  flex-shrink: 0;
+}
 .pvtpl .pvout {
-  grid-column: 2; /* sits under the dropdown */
+  min-width: 0;
   font-size: var(--fs-sm);
   color: var(--text-muted);
   overflow: hidden;
@@ -365,7 +376,7 @@
 /* report footer: Reference no + Date row */
 .pvform {
   display: grid;
-  grid-template-columns: 1fr 140px;
+  grid-template-columns: minmax(0, 1fr) 140px;
   column-gap: var(--sp-3);
   align-items: start;
   margin-bottom: var(--sp-3);
@@ -1396,4 +1407,90 @@
 .lp-box .docp-desk {
   min-width: 0; /* never wider than the panel: the page is scaled to fit instead */
   padding: 8px;
+}
+/* cheque slot: C4 adds class "has-cheque" to .pvform */
+.pvform.has-cheque {
+  grid-template-columns: minmax(0, 1fr) 170px 140px;
+}
+/* Last / Next chips on the label line; Next shrinks first */
+.pvchips {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+.pvlast,
+.pvnext {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pvnext {
+  flex-shrink: 4;
+  color: var(--text-muted);
+}
+/* reference box with the clock icon inside */
+.pvrefbox {
+  position: relative;
+}
+.pvrefbox input {
+  width: 100%;
+  padding-right: 34px;
+}
+.pvclock {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  bottom: 4px;
+  width: 28px;
+  min-height: 0;
+  height: auto;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: calc(var(--radius) - 2px);
+}
+.pvmenu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 3px);
+  min-width: 260px;
+  max-width: 360px;
+  z-index: 40;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+}
+.pvmenu button {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+}
+.pvmenuhead {
+  padding: 4px 8px;
+  font-size: var(--fs-sm);
+}
+.pvmenuall {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+/* second line under look-alike payee names */
+.pvsub {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+/* cheque warnings under the details row */
+.pvwarn {
+  margin: calc(var(--sp-1) * -1) 0 var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--warn);
 }

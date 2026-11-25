@@ -368,6 +368,8 @@ export default function SettingsScreen({
   onLabels,
   onMasterName,
   onTheme,
+  useCheque,
+  onUseCheque,
   onColumnsChanged,
   onUnitChanged,
 }: {
@@ -378,6 +380,8 @@ export default function SettingsScreen({
   onLabels: () => void;
   onMasterName: (n: string) => void;
   onTheme: (theme: string, density: string) => void;
+  useCheque: boolean;
+  onUseCheque: (on: boolean) => void;
   onColumnsChanged: () => void;
   onUnitChanged: () => void;
 }) {
@@ -443,6 +447,23 @@ export default function SettingsScreen({
               </select>
             </div>
           </div>
+        </div>
+
+        <div className="card">
+          <h3>Cheque number</h3>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={useCheque}
+              onChange={(e) => onUseCheque(e.target.checked)}
+            />{" "}
+            Use cheque number in reports
+          </label>
+          <p className="muted">
+            When this is on, the Entry screen has a Cheque no box and the
+            Reports tab has a Cheque no column. This is saved for this unit
+            only.
+          </p>
         </div>
 
         <div className="card">

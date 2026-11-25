@@ -7,7 +7,7 @@ const RC = "(SELECT COUNT(*) FROM report_items r WHERE r.tx_uid = t.uid)";
 export function listPreview(db: DB): PreviewRow[] {
   const rows = db
     .prepare(
-      `SELECT t.uid, p.position, a.payee, t.amount_paise, t.created_at, ${RC} AS report_count
+      `SELECT t.uid, p.position, a.payee, a.bank, a.branch, a.account_no, t.amount_paise, t.created_at, ${RC} AS report_count
      FROM preview_items p JOIN transactions t ON t.uid = p.tx_uid JOIN accounts a ON a.id = t.account_id
      WHERE t.deleted_at IS NULL ORDER BY p.position, p.added_at`,
     )

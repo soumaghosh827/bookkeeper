@@ -44,9 +44,13 @@ const snap = (n: string, d: string, t: TemplateText[], p: OutputPlan) =>
 export default function TemplatesScreen({
   onChanged,
   onDirtyChange,
+  useCheque,
+  onUseCheque,
 }: {
   onChanged: () => void;
   onDirtyChange?: (dirty: boolean) => void; // lets App ask before leaving with unsaved edits
+  useCheque: boolean;
+  onUseCheque: (on: boolean) => void;
 }) {
   const [list, setList] = useState<Template[]>([]);
   const [sel, setSel] = useState<number | null>(null);
@@ -64,6 +68,7 @@ export default function TemplatesScreen({
     mapping: DocMapping[]; // the same choices, ready for saveMapped
   } | null>(null); // finished letter + choices, kept on screen until Save changes
   const [askMap, setAskMap] = useState(false); // confirm replacing the template's stored Word file
+  const [askChq, setAskChq] = useState(false); // saved template uses {cheque_no} while the switch is off
   const [mapWarn, setMapWarn] = useState<{
     id: number;
     list: string[];
@@ -262,6 +267,8 @@ export default function TemplatesScreen({
         setSel(id);
       }
       show("Saved");
+      if (!useCheque && (await window.api.templates.usesCheque(id)))
+        setAskChq(true);
     } finally {
       busy.current = false;
     }
@@ -870,6 +877,22 @@ export default function TemplatesScreen({
             setPlan((p) => lockInline(p));
           }}
         />
+      )}
+      {askChq && (
+        <AskDialog
+          title="Turn on cheque number?"
+          confirmLabel="Turn on"
+          onResult={(ok) => {
+            setAskChq(false);
+            if (ok) onUseCheque(true);
+          }}
+        >
+          <p>This template uses a cheque number. Turn it on?</p>
+          <p className="muted">
+            Then the Entry screen has a Cheque no box. This is saved for this
+            unit only.
+          </p>
+        </AskDialog>
       )}
       {askMap && (
         <AskDialog

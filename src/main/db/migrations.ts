@@ -172,4 +172,11 @@ ALTER TABLE templates ADD COLUMN source_file BLOB;
 ALTER TABLE templates ADD COLUMN mapping TEXT;
 `,
   },
+  {
+    version: 6,
+    sql: `
+-- Optional cheque number of a report (free text, e.g. "123456" or "123456, 123457"). '' = none.
+ALTER TABLE reports ADD COLUMN cheque_no TEXT NOT NULL DEFAULT '';
+`,
+  },
 ];

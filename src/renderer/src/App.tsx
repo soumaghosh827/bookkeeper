@@ -33,6 +33,7 @@ export default function App() {
   const [masterName, setMasterName] = useState("Master");
   const [theme, setTheme] = useState("light");
   const [density, setDensity] = useState("comfortable");
+  const [useCheque, setUseCheque] = useState(false); // per unit: "Use cheque number" switch
   const [count, setCount] = useState(0);
   const [unit, setUnit] = useState<UnitInfo | null>(null); // the open unit
   const [masterV, setMasterV] = useState(0); // bumps when master data changes -> other screens re-read
@@ -60,11 +61,13 @@ export default function App() {
 
   const loadSettings = useCallback(async () => {
     setLabels(await window.api.labels.get());
-    const [mn, th, de] = await Promise.all([
+    const [mn, th, de, uc] = await Promise.all([
       window.api.prefs.get("master_name"),
       window.api.prefs.get("theme"),
       window.api.prefs.get("density"),
+      window.api.prefs.get("use_cheque"),
     ]);
+    setUseCheque(uc === "1");
     setMasterName(mn || "Master"); // per unit: a unit without a custom name shows the default
     setTheme(th ?? "light");
     setDensity(de ?? "comfortable");
@@ -118,6 +121,10 @@ export default function App() {
   const changeMasterName = async (n: string) => {
     const r = await window.api.prefs.set("master_name", n);
     if (r.ok) setMasterName(n);
+  };
+  const changeUseCheque = async (on: boolean) => {
+    const r = await window.api.prefs.set("use_cheque", on ? "1" : "0");
+    if (r.ok) setUseCheque(on);
   };
   const lock = async () => {
     await window.api.vault.lock();
@@ -195,6 +202,8 @@ export default function App() {
           <EntryScreen
             labels={labels}
             active={tab === "entry"}
+            useCheque={useCheque}
+            onUseCheque={changeUseCheque}
             refreshKey={both}
             onTxChanged={bumpTx}
             onMasterChanged={bumpMaster}
@@ -222,11 +231,16 @@ export default function App() {
           />
         </section>
         <section className="screen" hidden={tab !== "reports"}>
-          <ReportsScreen refreshKey={txV} />
+          <ReportsScreen refreshKey={txV} useCheque={useCheque} />
         </section>
         {tab === "templates" && (
           <section className="screen">
-            <TemplatesScreen onChanged={bumpTx} onDirtyChange={setTplDirty} />
+            <TemplatesScreen
+              onChanged={bumpTx}
+              onDirtyChange={setTplDirty}
+              useCheque={useCheque}
+              onUseCheque={changeUseCheque}
+            />
           </section>
         )}
         {tab === "settings" && (
@@ -241,6 +255,8 @@ export default function App() {
               }}
               onMasterName={changeMasterName}
               onTheme={changeTheme}
+              useCheque={useCheque}
+              onUseCheque={changeUseCheque}
               onUnitChanged={loadUnit}
               onColumnsChanged={() => {
                 bumpMaster();

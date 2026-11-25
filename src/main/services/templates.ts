@@ -3,6 +3,8 @@ import Docxtemplater from "docxtemplater";
 import type { DB } from "../db";
 import {
   describePlan,
+  entryGroup,
+  entryMakes,
   normalizePlan,
   type MappedSaveResult,
   type OutputPlan,
@@ -21,6 +23,8 @@ const toTpl = (r: any): Template => ({
   origin: !r.has_file ? "none" : r.has_source ? "mapped" : "prepared",
   updated_at: r.updated_at,
   format: describePlan(normalizePlan(r.output_plan)),
+  entry_group: entryGroup(normalizePlan(r.output_plan)),
+  entry_makes: entryMakes(normalizePlan(r.output_plan)),
 });
 
 const SEL =
@@ -75,8 +79,8 @@ export function checkDocx(buf: Buffer) {
     throw new Error("This is not a valid Word template: " + explain(e));
   }
 }
-/** Warnings (never errors) for a template that types text the app now adds itself. Reads the body, headers and footers. */
-export function lintTemplate(buf: Buffer): string[] {
+/** All text of a Word file: body, headers and footers. "" when the file cannot be read. */
+export function templateText(buf: Buffer): string {
   let text = "";
   try {
     const zip = new PizZip(buf);
@@ -93,8 +97,20 @@ export function lintTemplate(buf: Buffer): string[] {
       }
     }
   } catch {
-    return []; // checkDocx reports a broken file; lint stays silent
+    return ""; // checkDocx reports a broken file
   }
+  return text;
+}
+
+/** True when the template's Word file contains {cheque_no}. */
+export function templateUsesCheque(db: DB, id: number): boolean {
+  const f = getTemplateFile(db, id);
+  return !!f?.file && /\{\s*cheque_no\s*\}/.test(templateText(f.file));
+}
+
+/** Warnings (never errors) for a template that types text the app now adds itself. Reads the body, headers and footers. */
+export function lintTemplate(buf: Buffer): string[] {
+  const text = templateText(buf);
   const out: string[] = [];
   if (/\{\s*#\s*items\s*\}/.test(text))
     out.push(

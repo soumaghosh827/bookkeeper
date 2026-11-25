@@ -361,6 +361,9 @@ export function registerIpc() {
   );
   H("tpl:remove", (_e, id) => run(() => tpl.removeTemplate(db(), id)));
   H("tpl:lint", (_e, id: number) => tpl.lintStoredTemplate(db(), id));
+  H("tpl:usesCheque", (_e, id: number) =>
+    tpl.templateUsesCheque(db(), Math.trunc(Number(id)) || 0),
+  );
   // Read-only view of a Word file for the preview: pass the bytes (picked file) or a template id (stored file).
   H("tpl:inspect", (_e, src: Uint8Array | number) =>
     run<DocModel>(() => {
@@ -469,18 +472,21 @@ export function registerIpc() {
   H("tpl:setPlan", (_e, id: number, plan) =>
     run(() => tpl.setPlan(db(), id, plan)),
   );
-  H("rep:prepare", (_e, id, uids, title, refNo, reportDate, extraExcel) =>
-    runAsync(() =>
-      rep.prepare(
-        db(),
-        id,
-        (uids as string[]).map(String),
-        String(title ?? "").slice(0, 120),
-        String(refNo ?? ""),
-        String(reportDate ?? ""),
-        extraExcel === true,
+  H(
+    "rep:prepare",
+    (_e, id, uids, title, refNo, reportDate, extraExcel, chequeNo) =>
+      runAsync(() =>
+        rep.prepare(
+          db(),
+          id,
+          (uids as string[]).map(String),
+          String(title ?? "").slice(0, 120),
+          String(refNo ?? ""),
+          String(reportDate ?? ""),
+          extraExcel === true,
+          String(chequeNo ?? ""),
+        ),
       ),
-    ),
   );
   H("rep:discard", () => rep.discard());
   // references of the latest saved reports (for the Entry screen's "Last / Next / Recent")
@@ -490,6 +496,11 @@ export function registerIpc() {
       Math.min(Math.max(Math.trunc(Number(limit)) || 8, 1), 50),
     ),
   );
+  // cheque numbers: "already used?" check and the last one used (for the Entry screen)
+  H("rep:chequeUsed", (_e, chequeNo?: string) =>
+    rep.chequeUsed(db(), String(chequeNo ?? "").slice(0, 100)),
+  );
+  H("rep:lastCheque", () => rep.lastCheque(db()));
   // saved reports for the Reports tab
   H(
     "rep:list",

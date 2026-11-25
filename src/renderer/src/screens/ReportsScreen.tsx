@@ -6,7 +6,13 @@ import Icon from "../components/Icon";
 const PAGE = 50;
 
 /** Saved reports, newest first. Search and dates run in the database, so a long history stays fast. */
-export default function ReportsScreen({ refreshKey }: { refreshKey: unknown }) {
+export default function ReportsScreen({
+  refreshKey,
+  useCheque,
+}: {
+  refreshKey: unknown;
+  useCheque: boolean;
+}) {
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -84,7 +90,11 @@ export default function ReportsScreen({ refreshKey }: { refreshKey: unknown }) {
         <input
           type="search"
           className="search"
-          placeholder="Search reference, template or file…"
+          placeholder={
+            useCheque
+              ? "Search reference, cheque, template or file…"
+              : "Search reference, template or file…"
+          }
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -133,6 +143,7 @@ export default function ReportsScreen({ refreshKey }: { refreshKey: unknown }) {
               <tr>
                 <th>Date</th>
                 <th>Reference no</th>
+                {useCheque && <th>Cheque no</th>}
                 <th>Template</th>
                 <th className="r">Transactions</th>
                 <th className="r">Total (₹)</th>
@@ -157,6 +168,11 @@ export default function ReportsScreen({ refreshKey }: { refreshKey: unknown }) {
                     <td title={r.ref_no}>
                       {r.ref_no || <span className="faint">—</span>}
                     </td>
+                    {useCheque && (
+                      <td title={r.cheque_no}>
+                        {r.cheque_no || <span className="faint">—</span>}
+                      </td>
+                    )}
                     <td title={r.template_name}>{r.template_name}</td>
                     <td className="r">{r.item_count}</td>
                     <td className="r">{formatPaise(r.total_paise)}</td>
@@ -166,7 +182,7 @@ export default function ReportsScreen({ refreshKey }: { refreshKey: unknown }) {
                   </tr>
                   {openId === r.id && (
                     <tr className="rptdetail">
-                      <td colSpan={6}>
+                      <td colSpan={useCheque ? 7 : 6}>
                         {items === null ? (
                           <span className="muted">Loading…</span>
                         ) : items.length === 0 ? (

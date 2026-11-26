@@ -2,6 +2,7 @@ import PizZip from "pizzip";
 import { XMLSerializer } from "@xmldom/xmldom";
 import type { DocMapping } from "@shared/types";
 import {
+  attr,
   collectRuns,
   elementChildren,
   kid,
@@ -266,5 +267,90 @@ export function applyMapping(
     const decl = xml.match(/^\s*<\?xml[^>]*\?>\s*/)?.[0] ?? "";
     zip.file(part, out.startsWith("<?xml") ? out : decl + out);
   }
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" });
+}
+
+const walk = (el: Element, fn: (n: Element) => void) => {
+  for (const c of elementChildren(el)) {
+    fn(c);
+    walk(c, fn);
+  }
+};
+const plainText = (el: Element) => {
+  let s = "";
+  walk(el, (n) => {
+    if (n.localName === "t") s += n.textContent ?? "";
+  });
+  return s;
+};
+const isPageBr = (n: Element) =>
+  n.localName === "br" && attr(n, "type") === "page";
+/** A paragraph with no text, picture, field, section break or page break. */
+const isBlank = (el: Element) => {
+  if (el.localName !== "p") return false;
+  let blank = true;
+  walk(el, (n) => {
+    if (n.localName === "t" && (n.textContent ?? "").trim()) blank = false;
+    if (
+      ["drawing", "pict", "object", "sectPr", "fldChar", "instrText"].includes(
+        n.localName,
+      ) ||
+      isPageBr(n)
+    )
+      blank = false;
+  });
+  return blank;
+};
+
+/**
+ * Finished letter, "table on a new page": takes the {@table} paragraph out of the letter, so the report builder
+ * adds the table at the end of the letter, after a page break (renderDocx does that when there is no marker).
+ * When only empty paragraphs follow the marker, the page break just before it belonged to the table, so it is removed too.
+ * That way a table that already sat alone on the last page does not leave a blank page behind.
+ * Returns the file unchanged when there is no {@table} paragraph directly in the body.
+ */
+export function moveTableToEnd(file: Buffer): Buffer {
+  const zip = new PizZip(file);
+  const f = zip.file("word/document.xml");
+  if (!f) return file;
+  const xml = f.asText();
+  const doc = parseXml(xml);
+  const body = kid(doc.documentElement as Element, "body");
+  if (!body) return file;
+  const items = elementChildren(body);
+  const at = items.findIndex(
+    (el) => el.localName === "p" && plainText(el).trim() === "{@table}",
+  );
+  if (at < 0) return file;
+
+  const onlyBlanksAfter = items
+    .slice(at + 1)
+    .filter((el) => el.localName !== "sectPr")
+    .every(isBlank);
+  if (onlyBlanksAfter) {
+    let i = at - 1;
+    while (i >= 0 && isBlank(items[i])) i--;
+    const prev = i >= 0 ? items[i] : null;
+    if (prev && prev.localName === "p") {
+      // the last page break in that paragraph, and whether any text comes after it
+      const st = { br: null as Element | null, after: false };
+      walk(prev, (n) => {
+        if (isPageBr(n)) {
+          st.br = n;
+          st.after = false;
+        } else if (n.localName === "t" && (n.textContent ?? "").trim())
+          st.after = true;
+      });
+      if (st.br && !st.after) {
+        st.br.parentNode!.removeChild(st.br);
+        if (isBlank(prev)) body.removeChild(prev);
+      }
+    }
+  }
+  body.removeChild(items[at]);
+
+  const out = new XMLSerializer().serializeToString(doc as any);
+  const decl = xml.match(/^\s*<\?xml[^>]*\?>\s*/)?.[0] ?? "";
+  zip.file("word/document.xml", out.startsWith("<?xml") ? out : decl + out);
   return zip.generate({ type: "nodebuffer", compression: "DEFLATE" });
 }

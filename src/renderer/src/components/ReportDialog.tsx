@@ -191,7 +191,8 @@ export default function ReportDialog({
       <Modal
         title={saved ? "Report saved" : "Generate report"}
         wide={!saved}
-        onClose={busy || printing || refreshing ? undefined : onClose}
+        onClose={onClose}
+        locked={busy || printing || refreshing}
         actions={
           saved ? (
             <>

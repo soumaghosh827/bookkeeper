@@ -60,7 +60,9 @@ export function useLetterPreview(
             : WORDS.preview.mappedInline
           : WORDS.preview.inline
         : placement === "new_page"
-          ? WORDS.preview.new_page
+          ? mapped
+            ? WORDS.preview.mappedNewPage
+            : WORDS.preview.new_page
           : plan.outputs.some((o) => o.kind === "xlsx")
             ? WORDS.preview.noTableExcel
             : WORDS.preview.noTable;

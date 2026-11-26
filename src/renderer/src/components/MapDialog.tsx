@@ -11,6 +11,7 @@ import DocPreview from "@/components/DocPreview";
 import MapPopover, { type MapPick } from "@/components/MapPopover";
 import MapPreview from "@/components/MapPreview";
 import Modal from "@/components/Modal";
+import AskDialog from "@/components/AskDialog";
 import { WORDS } from "@shared/words";
 
 const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -32,6 +33,7 @@ export default function MapDialog({
   initialPicks,
   appColumns,
   onClose,
+  onCancel,
 }: {
   title: string;
   source: Uint8Array | number;
@@ -42,6 +44,7 @@ export default function MapDialog({
     mapping: DocMapping[],
     changed: boolean, // anything different from what the dialog opened with
   ) => void; // always hands back the current choices, and the same choices ready for saveMapped
+  onCancel?: () => void; // leave without keeping this session's changes; the Cancel button shows only when this is given
 }) {
   const [data, setData] = useState<DocAnalysis | null>(null);
   const [error, setError] = useState("");
@@ -177,12 +180,16 @@ export default function MapDialog({
       data ? buildMapping(data.suggestions, picks) : [],
       sig(picks) !== baseline.current || dropped > 0,
     );
+  const [askCancel, setAskCancel] = useState(false);
+  const touched = sig(picks) !== baseline.current; // the user changed a choice in this session
+  const cancel = () => (touched ? setAskCancel(true) : onCancel?.());
   const i = ZOOMS.indexOf(zoom);
   return (
+    <>
     <Modal
       title={title}
       wide
-      onClose={finish}
+      onClose={onCancel ? cancel : finish}
       actions={
         <>
           <button
@@ -227,6 +234,7 @@ export default function MapDialog({
                 ? "Filling…"
                 : "See it filled"}
           </button>
+          {onCancel && <button onClick={cancel}>Cancel</button>}
           <button className="primary" onClick={finish}>
             Done
           </button>
@@ -302,5 +310,19 @@ export default function MapDialog({
         <p className="muted">Reading the file…</p>
       )}
     </Modal>
+    {askCancel && (
+      <AskDialog
+        title="Throw away your changes?"
+        confirmLabel="Throw away"
+        danger
+        onResult={(ok) => {
+          setAskCancel(false);
+          if (ok) onCancel?.();
+        }}
+      >
+        <p>The choices you made just now will not be kept.</p>
+      </AskDialog>
+    )}
+    </>
   );
 }

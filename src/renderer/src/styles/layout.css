@@ -246,6 +246,43 @@
   min-height: 0;
   flex: 1;
 }
+.dlg-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex: none;
+  margin-bottom: var(--sp-2);
+}
+.dlg-head > h3 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+button.dlg-x {
+  margin-left: auto;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--text);
+}
+button.dlg-x:hover:not(:disabled) {
+  background: transparent;
+  color: var(--danger);
+}
+button.dlg-x:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+button.dlg-x:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .dlg-actions {
   display: flex;
   justify-content: flex-end;

@@ -138,9 +138,13 @@ export function withLayout(
       ]
     : [];
   const at = body.blocks.findIndex(isMarker);
+  // new page (prepared or finished letter): the table leaves its spot and goes to the end, after a page break (as in the generated file)
+  const toEnd = placement === "new_page";
   const blocks =
     at >= 0
-      ? [...body.blocks.slice(0, at), ...add, ...body.blocks.slice(at + 1)]
+      ? toEnd
+        ? [...body.blocks.slice(0, at), ...body.blocks.slice(at + 1), ...add]
+        : [...body.blocks.slice(0, at), ...add, ...body.blocks.slice(at + 1)]
       : [...body.blocks, ...add];
   return {
     ...model,

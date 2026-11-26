@@ -12,7 +12,6 @@ import {
   layoutOptions,
   applyPreset,
   detectPreset,
-  lockInline,
   type PresetId,
 } from "@shared/planSummary";
 import { WORDS } from "@shared/words";
@@ -87,6 +86,11 @@ export default function TemplatesScreen({
   } | null>(null); // Word file picked but not stored until Save
   const busy = useRef(false); // blocks a double click on Save
   const newId = useRef<number | null>(null); // row created by a Save of a draft that failed halfway, so a retry updates it
+  const beforePick = useRef<{
+    plan: OutputPlan;
+    staged: { name: string; data: Uint8Array; warnings: string[] } | null;
+    layoutChosen: boolean;
+  } | null>(null); // screen state before a finished letter was picked, so backing out can restore it
 
   const { toast, show, hide } = useToast();
   const cur = list.find((t) => t.id === sel) ?? null;
@@ -105,6 +109,15 @@ export default function TemplatesScreen({
       : cur?.has_file
         ? cur.id
         : undefined;
+  // Names that count as known {tags} in the template previews: saved texts, plus texts a not-yet-saved finished letter is creating
+  const tagsForPreview = {
+    saved: [
+      ...texts.map((t) => t.key),
+      ...(mapWork?.mapping ?? [])
+        .filter((m) => m.kind === "text")
+        .map((m) => m.tag),
+    ],
+  };
   const shownOrigin = mapWork
     ? "mapped"
     : staged
@@ -232,10 +245,7 @@ export default function TemplatesScreen({
       if (draft) newId.current = id; // a retry after a later failure updates this row instead of creating another
       const b = await window.api.templates.setTexts(id, cleanTexts);
       if (!b.ok) return show(b.error ?? "Failed", { tone: "error" });
-      const c = await window.api.templates.setPlan(
-        id,
-        mapWork ? lockInline(plan) : plan,
-      );
+      const c = await window.api.templates.setPlan(id, plan);
       if (!c.ok) return show(c.error ?? "Failed", { tone: "error" });
       if (staged) {
         const f = await window.api.templates.setFile(id, staged.data);
@@ -334,9 +344,20 @@ export default function TemplatesScreen({
   // a finished letter waiting on screen is replaced by a prepared upload, so ask first
   const pickWord = () => (mapWork ? setSwap(() => doPickWord) : doPickWord());
 
+  // Puts the screen back as it was before a finished letter was picked
+  const undoPick = () => {
+    const b = beforePick.current;
+    beforePick.current = null;
+    if (!b) return;
+    setStaged(b.staged);
+    setPlan(b.plan);
+    setLayoutChosen(b.layoutChosen);
+  };
+
   async function doPickFinished() {
     const r = await window.api.templates.pickSource();
     if (r.ok) {
+      beforePick.current = { plan, staged, layoutChosen };
       voidLayout("mapped");
       setStaged(null);
       setMapWarn(null);
@@ -346,7 +367,6 @@ export default function TemplatesScreen({
         picks: {},
         mapping: [],
       });
-      setPlan((p) => lockInline(p));
       setMapOpen(true);
     } else if (r.error !== "Cancelled")
       show(r.error ?? "Failed", { tone: "error" });
@@ -641,14 +661,7 @@ export default function TemplatesScreen({
                       <div className="field">
                         <label>What this template generates</label>
                         <select
-                          value={
-                            layoutShown
-                              ? shownOrigin === "mapped" &&
-                                presetId === "two_page"
-                                ? "one_page"
-                                : presetId
-                              : ""
-                          }
+                          value={layoutShown ? presetId : ""}
                           onChange={(e) =>
                             pickPreset(e.target.value as PresetId)
                           }
@@ -666,7 +679,7 @@ export default function TemplatesScreen({
                         </select>
                         <small>
                           {shownOrigin === "mapped"
-                            ? WORDS.layout.mapped.hint
+                            ? WORDS.layout.mapped.hint[presetId]
                             : layoutShown
                               ? PRESETS.find((p) => p.id === presetId)!.hint
                               : WORDS.layout.chooseHint}
@@ -827,6 +840,7 @@ export default function TemplatesScreen({
                       mapped={shownOrigin === "mapped"}
                       source={previewSource}
                       mapping={staged ? undefined : mapWork?.mapping}
+                      tags={tagsForPreview}
                       onOpenLarger={() => setShowDoc(true)}
                     />
                   )}
@@ -845,6 +859,7 @@ export default function TemplatesScreen({
           mapping={staged ? undefined : mapWork?.mapping}
           plan={plan}
           mapped={shownOrigin === "mapped"}
+          tags={tagsForPreview}
           onClose={() => setShowDoc(false)}
         />
       )}
@@ -857,9 +872,20 @@ export default function TemplatesScreen({
           onClose={(picks, mapping) => {
             setMapOpen(false);
             // no choices = nothing to keep
-            setMapWork(
-              Object.keys(picks).length ? { ...mapWork, picks, mapping } : null,
-            );
+            if (Object.keys(picks).length) {
+              beforePick.current = null; // keeping this letter now
+              setMapWork({ ...mapWork, picks, mapping });
+            } else {
+              setMapWork(null);
+              undoPick();
+            }
+          }}
+          onCancel={() => {
+            setMapOpen(false);
+            if (beforePick.current) {
+              setMapWork(null); // a freshly chosen letter: remove it and restore the screen
+              undoPick();
+            }
           }}
         />
       )}
@@ -867,6 +893,7 @@ export default function TemplatesScreen({
         <MapDialog
           title={`Choices: ${cur.name}`}
           source={cur.id}
+          onCancel={() => setMapSaved(false)}
           appColumns={plan.columns.filter((c) => c.on).map((c) => c.header)}
           onClose={(picks, mapping, changed) => {
             setMapSaved(false);
@@ -874,7 +901,6 @@ export default function TemplatesScreen({
             if (!Object.keys(picks).length)
               return show("No choices left, so nothing was changed.");
             setMapWork({ name: cur.name, data: cur.id, picks, mapping });
-            setPlan((p) => lockInline(p));
           }}
         />
       )}

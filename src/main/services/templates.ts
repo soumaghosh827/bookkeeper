@@ -13,6 +13,7 @@ import {
   type TemplateText,
 } from "@shared/types";
 import { applyMapping } from "./docxMap";
+import { explain } from "./explainError";
 import { validateMapping } from "./mappingRules";
 
 const toTpl = (r: any): Template => ({
@@ -323,12 +324,4 @@ export function setPlan(db: DB, id: number, plan: unknown): Result<OutputPlan> {
   return { ok: true, data: clean };
 }
 
-export function explain(e: any): string {
-  const errs = e?.properties?.errors;
-  if (Array.isArray(errs) && errs.length)
-    return errs
-      .slice(0, 1)
-      .map((x: any) => x?.properties?.explanation || x?.message)
-      .join("; ");
-  return e?.message ?? "Unknown error";
-}
+export { explain };

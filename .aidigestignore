@@ -31,6 +31,7 @@ _.xls
 \*.log
 codebase.md
 codebase_src.md
+today_changes.diff
 
 # --- ADDITIONS TO REDUCE TOKEN BLOAT ---
 

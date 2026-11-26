@@ -2,6 +2,7 @@ import type { DocMapping, OutputPlan, TablePlacement } from "@shared/types";
 import { summarizePlan } from "@shared/planSummary";
 import { tableHeader } from "@shared/format";
 import LetterPreview from "@/components/LetterPreview";
+import type { DocTags } from "@/components/DocPreview";
 import { WORDS } from "@shared/words";
 
 /** The table as it will look: your column headers, two sample rows, and the GRAND TOTAL row. `title` adds the optional title bar above it. */
@@ -110,6 +111,7 @@ export default function PlanPreview({
   mapped = false,
   source,
   mapping,
+  tags,
   onOpenLarger,
 }: {
   plan: OutputPlan;
@@ -117,6 +119,7 @@ export default function PlanPreview({
   mapped?: boolean; // built from a finished letter: its table position is fixed
   source?: Uint8Array | number; // the Word file (bytes, or a stored template's id): shows the real letter instead of the sketch
   mapping?: DocMapping[]; // an unsaved finished letter's choices
+  tags?: DocTags; // template preview: show {tags} as chips
   onOpenLarger?: () => void;
 }) {
   const s = summarizePlan(plan, templateName, mapped);
@@ -156,6 +159,7 @@ export default function PlanPreview({
                 plan={plan}
                 mapped={mapped}
                 mapping={mapping}
+                tags={tags}
               />
             ) : (
               <WordSketch plan={plan} table={o.table} />

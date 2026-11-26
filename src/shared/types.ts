@@ -661,17 +661,9 @@ export const DEFAULT_PLAN: OutputPlan = {
 };
 
 /** Short, human label for what a template produces. Order follows the plan's outputs. */
-export function describePlan(plan: OutputPlan, mapped = false): string {
-  const parts = plan.outputs.map((o) =>
-    o.kind === "xlsx"
-      ? WORDS.badge.excel
-      : mapped
-        ? o.table === "none"
-          ? WORDS.badge.mappedNoTable
-          : WORDS.badge.mappedWithTable
-        : WORDS.badge[o.table],
-  );
-  return parts.length ? parts.join(" + ") : WORDS.badge.empty;
+export function describePlan(plan: OutputPlan, _mapped = false): string {
+  // One wording for the whole app: the same text as the Entry screen's dropdown groups.
+  return entryGroup(plan);
 }
 
 /** Entry screen: dropdown group header for a plan. Same wording for prepared and finished-letter templates. */

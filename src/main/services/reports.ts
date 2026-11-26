@@ -29,6 +29,7 @@ import {
 import { addReference, cleanRef, refKey } from "./txReferences";
 import { getRowsByUids } from "./transactions";
 import { explain, getTemplateFile, getTexts } from "./templates";
+import { moveTableToEnd } from "./docxMap";
 import { buildTableXlsx } from "./tableExcel";
 
 /**
@@ -468,7 +469,10 @@ export async function prepare(
       if (o.kind === "xlsx") buffer = await buildTableXlsx(model);
       else {
         const tableXml = docxTableXml(model, o.table, tableFontFor(tpl.file!));
-        buffer = renderDocx(tpl.file!, { ...base, table: tableXml }, tableXml);
+        // "new page" (prepared or finished letter): the table leaves its spot and goes to the end, after a page break
+        const letter =
+          o.table === "new_page" ? moveTableToEnd(tpl.file!) : tpl.file!;
+        buffer = renderDocx(letter, { ...base, table: tableXml }, tableXml);
       }
       files.push({ id: o.id, kind: o.kind, fileName, buffer });
     }
@@ -500,13 +504,9 @@ export async function prepare(
       },
     };
   } catch (e) {
-    const msg = explain(e);
     return {
       ok: false,
-      error:
-        "Could not fill the template: " +
-        msg +
-        (/raw/i.test(msg) ? " (put {@table} alone in its own paragraph)" : ""),
+      error: "Could not fill the template: " + explain(e),
     };
   }
 }

@@ -55,6 +55,13 @@
   --mark-possible: #fff0b8;
   --mark-possible-line: #a87400;
   --mark-chosen-line: #2f7df0;
+  /* {tag} chips in template previews (fixed light values, like the paper) */
+  --tag-bg: #e6e9ff;
+  --tag-line: #5a67d8;
+  --tag-ink: #2a3490;
+  --tag-bad-bg: #ffe5c2;
+  --tag-bad-line: #c25e00;
+  --tag-bad-ink: #7a3a00;
 
   /* type */
   --font-ui:

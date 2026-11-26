@@ -1074,6 +1074,7 @@ export default function EntryScreen({
           wide
           title="Add existing transactions to the list"
           onClose={() => setPickerOpen(false)}
+          actions={<button onClick={() => setPickerOpen(false)}>Close</button>}
         >
           <div
             style={{

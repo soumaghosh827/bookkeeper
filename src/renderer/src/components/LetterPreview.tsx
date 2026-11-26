@@ -1,7 +1,8 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { DocMapping, OutputPlan } from "@shared/types";
 import { useLetterPreview } from "@/lib/useLetterPreview";
-import DocPreview from "@/components/DocPreview";
+import DocPreview, { type DocTags } from "@/components/DocPreview";
+import { WORDS } from "@shared/words";
 
 const PX_PER_PT = 96 / 72;
 
@@ -11,11 +12,13 @@ export default function LetterPreview({
   plan,
   mapped = false,
   mapping,
+  tags,
 }: {
   source: Uint8Array | number; // the file's bytes, or a stored template's id
   plan: OutputPlan;
   mapped?: boolean;
   mapping?: DocMapping[]; // unsaved finished letter: its choices
+  tags?: DocTags; // template preview: show {tags} as chips
 }) {
   const { shown, error, note } = useLetterPreview(
     source,
@@ -47,11 +50,16 @@ export default function LetterPreview({
       <div className="lp-bar">
         <span className="muted">{note}</span>
       </div>
+      {tags && (
+        <div className="lp-bar">
+          <span className="muted">{WORDS.preview.tagsLegend}</span>
+        </div>
+      )}
       <div className="lp-box" ref={box}>
         {error ? (
           <div className="notice">{error}</div>
         ) : shown && width > 0 ? (
-          <DocPreview model={shown} zoom={zoom} />
+          <DocPreview model={shown} zoom={zoom} tags={tags} />
         ) : (
           <p className="muted">Reading the file…</p>
         )}

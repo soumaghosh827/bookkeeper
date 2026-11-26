@@ -852,6 +852,43 @@
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
+/* ---- {tag} chips in template previews ---- */
+.docp-tag {
+  --c: var(--tag-line);
+  --l: inset 1px 0 0 var(--c);
+  --r: inset -1px 0 0 var(--c);
+  border-radius: 3px;
+  padding: 0 2px;
+  background: var(--tag-bg);
+  color: var(--tag-ink);
+  box-shadow:
+    inset 0 1px 0 var(--c),
+    inset 0 -1px 0 var(--c),
+    var(--l),
+    var(--r);
+  font-weight: 600;
+  cursor: help;
+}
+/* a tag that Word split over several runs: the pieces join into one box */
+.docp-tag.jl {
+  --l: inset 0 0 0 transparent;
+  padding-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.docp-tag.jr {
+  --r: inset 0 0 0 transparent;
+  padding-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.docp-tag.bad {
+  --c: var(--tag-bad-line);
+  background: var(--tag-bad-bg);
+  color: var(--tag-bad-ink);
+  text-decoration: underline wavy var(--tag-bad-line);
+  text-underline-offset: 2px;
+}
 /* ---- Mapping preview (MapPreview) ---- */
 .mapprev-bar {
   position: sticky;

@@ -50,18 +50,18 @@ export function applyPreset(plan: OutputPlan, id: PresetId): OutputPlan {
 }
 
 /** A finished letter decides where its table goes, so a forced new page becomes the {@table} position. Nothing else changes. */
-export function lockInline(plan: OutputPlan): OutputPlan {
-  if (!plan.outputs.some((o) => o.kind === "docx" && o.table === "new_page"))
-    return plan;
-  return {
-    ...plan,
-    outputs: plan.outputs.map((o) =>
-      o.kind === "docx" && o.table === "new_page"
-        ? { ...o, table: "inline" as const }
-        : o,
-    ),
-  };
-}
+// export function lockInline(plan: OutputPlan): OutputPlan {
+//   if (!plan.outputs.some((o) => o.kind === "docx" && o.table === "new_page"))
+//     return plan;
+//   return {
+//     ...plan,
+//     outputs: plan.outputs.map((o) =>
+//       o.kind === "docx" && o.table === "new_page"
+//         ? { ...o, table: "inline" as const }
+//         : o,
+//     ),
+//   };
+// }
 
 const safe = (s: string) =>
   s
@@ -104,14 +104,12 @@ const WORD_NOTE: Record<TablePlacement, string> = WORDS.note.word;
 const MAPPED_NOTE: Record<TablePlacement, string> = WORDS.note.mappedWord;
 const MAPPED_LABEL: Record<PresetId, string> = WORDS.layout.mapped.label;
 
-/** Layout choices for the selector. A finished letter fixes its own table position, so it only offers letter-only or letter + Excel. */
+/** Layout choices for the selector. A finished letter offers the same three layouts, with its own labels. */
 export function layoutOptions(mapped: boolean) {
-  return mapped
-    ? PRESETS.filter((p) => p.id !== "two_page").map((p) => ({
-        id: p.id,
-        label: MAPPED_LABEL[p.id],
-      }))
-    : PRESETS.map((p) => ({ id: p.id, label: p.label }));
+  return PRESETS.map((p) => ({
+    id: p.id,
+    label: mapped ? MAPPED_LABEL[p.id] : p.label,
+  }));
 }
 
 /** Everything a preview needs to say what a template will generate. */

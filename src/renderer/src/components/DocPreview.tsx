@@ -6,9 +6,80 @@ import type {
   DocParagraph,
   DocTable,
 } from "@shared/types";
+import { MAP_TAG_LABELS } from "@shared/types";
 
 const PX_PER_PT = 96 / 72;
 const HEX = /^[0-9a-f]{6}$/i;
+
+// ---- {tag} chips (template previews only; switched on by the `tags` prop) ----
+const TAG_RE = /\{[A-Za-z_@][A-Za-z0-9_]*\}/g;
+export interface DocTags {
+  saved?: string[]; // the template's own saved-text names, so they count as known
+}
+interface TagInfo {
+  saved: Set<string>;
+}
+const TagCtx = createContext<TagInfo | null>(null);
+interface TagRange {
+  start: number;
+  end: number;
+  known: boolean;
+  hint: string;
+}
+
+// Every {tag} in a paragraph, found on the whole paragraph text, so a tag Word split over several runs is still caught.
+function tagRanges(p: DocParagraph, info: TagInfo): TagRange[] {
+  const text = p.runs.map((r) => r.text).join("");
+  const out: TagRange[] = [];
+  for (const m of text.matchAll(TAG_RE)) {
+    const name = m[0].slice(1, -1);
+    const start = m.index ?? 0;
+    let known = true;
+    let hint: string;
+    if (name === "@table") hint = "The table made by the app";
+    else if (Object.hasOwn(MAP_TAG_LABELS, name))
+      hint = `The app fills in: ${MAP_TAG_LABELS[name]}`;
+    else if (info.saved.has(name)) hint = "Your own saved text";
+    else {
+      known = false;
+      hint = "Not a known field. The app cannot fill this in.";
+    }
+    out.push({ start, end: start + m[0].length, known, hint });
+  }
+  return out;
+}
+
+// One run's text, with the tags inside it drawn as chips. `start` = where this run begins in the paragraph text.
+function Tagged({
+  text,
+  start,
+  ranges,
+}: {
+  text: string;
+  start: number;
+  ranges: TagRange[];
+}) {
+  const out: ReactNode[] = [];
+  let at = 0;
+  for (const r of ranges) {
+    const from = Math.max(r.start - start, at);
+    const to = Math.min(r.end - start, text.length);
+    if (to <= from) continue;
+    if (from > at) out.push(text.slice(at, from));
+    out.push(
+      <span
+        key={from}
+        className={`docp-tag${r.known ? "" : " bad"}${r.start < start ? " jl" : ""}${r.end > start + text.length ? " jr" : ""}`}
+        title={r.hint}
+      >
+        {text.slice(from, to)}
+      </span>,
+    );
+    at = to;
+  }
+  if (at < text.length) out.push(text.slice(at));
+  return <>{out}</>;
+}
 
 /** A highlighted stretch of one paragraph (mapping mode). Offsets count characters of the paragraph text, like DocRun.offset. */
 export interface DocMark {
@@ -80,6 +151,9 @@ function fontStack(name: string) {
 
 function Para({ p, s }: { p: DocParagraph; s: number }) {
   const last = p.runs[p.runs.length - 1];
+  const tagInfo = useContext(TagCtx);
+  const ranges = tagInfo ? tagRanges(p, tagInfo) : [];
+  let pos = 0; // where each run starts in the paragraph text (for tag chips)
   return (
     <p
       className="docp-p"
@@ -93,6 +167,8 @@ function Para({ p, s }: { p: DocParagraph; s: number }) {
     >
       {p.runs.map((r, i) => {
         const size = (r.size ?? 11) * s;
+        const start = pos;
+        pos += r.text.length;
         if (r.image)
           return (
             <span key={i} className="docp-img" style={{ fontSize: size }}>
@@ -111,7 +187,11 @@ function Para({ p, s }: { p: DocParagraph; s: number }) {
               color: r.color && HEX.test(r.color) ? `#${r.color}` : undefined,
             }}
           >
-            <Marked text={r.text} offset={r.offset} addr={p.addr} />
+            {ranges.length ? (
+              <Tagged text={r.text} start={start} ranges={ranges} />
+            ) : (
+              <Marked text={r.text} offset={r.offset} addr={p.addr} />
+            )}
           </span>
         );
       })}
@@ -180,17 +260,22 @@ function paginate(blocks: DocBlock[]): DocBlock[][] {
 export default function DocPreview({
   marks,
   onPick,
+  tags,
   ...rest
 }: {
+  tags?: DocTags; // template preview: draw every {tag} as a chip and flag unknown ones
   model: DocModel;
   zoom?: number;
   print?: boolean; // paper output: no desk and no page padding (the print dialog supplies the margins)
   marks?: Map<string, DocMark[]>; // mapping mode: highlights, keyed by addrKey(paragraph addr)
   onPick?: (id: string, el: HTMLElement) => void; // a highlight was clicked, or activated from the keyboard; el = the highlighted piece
 }) {
+  const tagInfo = tags ? { saved: new Set(tags.saved ?? []) } : null;
   return (
     <MarkCtx.Provider value={marks ? { marks, onPick } : null}>
-      <Sheets {...rest} />
+      <TagCtx.Provider value={tagInfo}>
+        <Sheets {...rest} />
+      </TagCtx.Provider>
     </MarkCtx.Provider>
   );
 }

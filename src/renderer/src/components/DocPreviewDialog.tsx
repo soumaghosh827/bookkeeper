@@ -1,8 +1,9 @@
 import { useState } from "react";
 import type { DocMapping, OutputPlan } from "@shared/types";
 import { useLetterPreview } from "@/lib/useLetterPreview";
-import DocPreview from "@/components/DocPreview";
+import DocPreview, { type DocTags } from "@/components/DocPreview";
 import Modal from "@/components/Modal";
+import { WORDS } from "@shared/words";
 
 const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -13,6 +14,7 @@ export default function DocPreviewDialog({
   plan,
   mapped = false,
   mapping,
+  tags,
   onClose,
 }: {
   title: string;
@@ -20,6 +22,7 @@ export default function DocPreviewDialog({
   plan?: OutputPlan; // when given, the preview shows the table where this layout puts it
   mapped?: boolean; // finished letter: never mention {@table}
   mapping?: DocMapping[]; // unsaved finished letter: its choices, shown applied
+  tags?: DocTags; // template preview: show {tags} as chips
   onClose: () => void;
 }) {
   const [zoom, setZoom] = useState(1);
@@ -75,7 +78,12 @@ export default function DocPreviewDialog({
               {note}
             </div>
           )}
-          <DocPreview model={shown} zoom={zoom} />
+          {tags && (
+            <p className="muted" style={{ margin: "0 0 8px" }}>
+              {WORDS.preview.tagsLegend}
+            </p>
+          )}
+          <DocPreview model={shown} zoom={zoom} tags={tags} />
         </>
       ) : (
         <p className="muted">Reading the file…</p>
